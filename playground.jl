@@ -1,5 +1,5 @@
 ### A Pluto.jl notebook ###
-# v0.20.21
+# v0.20.24
 
 using Markdown
 using InteractiveUtils
@@ -10,78 +10,162 @@ using RxInfer, DataFrames, CSV, Plots, StatsPlots
 # ╔═╡ a67e8923-019e-4df1-9e40-1b5f4a540685
 df = DataFrame(CSV.File("Housing.csv"))
 
-# ╔═╡ 30fac690-3b1b-4635-bb71-f3afbd6e46f2
-@model function bayesian_sum(output, a, b, components, j, k)
-	if k === size(components, 2)
-		output ~ a[k] * components[j, k] + b[k]
-	else
-		tmp ~ bayesian_sum(a = a, b = b, components = components, j = j, k = k + 1)
-        output ~ (a[k] * components[j, k] + b[k]) + tmp
-	end
-end
-
 # ╔═╡ 52ff4c65-be00-40c6-b5a0-a843d4f34518
-@model function bayesian_regression(components, results)
-	local a, b
-	for i in 1:size(components, 2)
-		a[i] ~ Normal(mean = 0.0, variance = 1.0)
-		b[i] ~ Normal(mean = 0.0, variance = 10.0)
-	end
-	p ~ Gamma(shape = 1, rate = 1e-6)
-	for j in eachindex(results)
-        results[j] ~ Normal(
-			mean = bayesian_sum(a = a, b = b, components = components, j = j, k = 1),
-			precision = p
-		)
+@model function bayesian_regression(x, y)
+	a ~ Uninformative()
+	b ~ Uninformative()
+	p ~ Uninformative()
+	
+	for i in 1:length(y)
+		m[i] ~ a * x[i] + b	
+		y[i] ~ Normal(mean = m[i], precision = p)
 	end
 end
 
-# ╔═╡ 0cf6043f-949a-4556-8f73-89d0ef4f45c0
-components = Matrix(df[!, setdiff(names(df), ["price", "id", "date", "zipcode"])])
-
-# ╔═╡ d694b54e-0596-45fd-bab7-ad38a6c1f68e
-results = df[!, "price"]
-
-# ╔═╡ ad962673-cbe9-4ddc-aecf-293c7037c895
-begin
-	limit = min(50, length(results))
-	climit = min(10, size(components, 2))
-end
-
-# ╔═╡ c10379ec-aca3-45d7-9a81-b40f11a96dca
+# ╔═╡ e1971712-5d58-4f49-b4b6-0a4743414b46
 @initialization function init()
-	μ(a) = Normal(mean = 0.0, variance = 1.0)
-	μ(b) = Normal(mean = 0.0, variance = 100.0)
+	μ(a) = Normal(mean = 0.0, variance = 1e4)
+	μ(b) = Normal(mean = 0.0, variance = 1e12)
 	q(p) = Gamma(shape = 1, rate = 1e-6)
 end
 
-# ╔═╡ b202ef09-c1b6-43ce-b23e-a991917bdba1
-result = infer(
-	model = bayesian_regression(),
-	data = (components = components[1:limit, 1:climit], results = results[1:limit]),
-	initialization = init(),
-	constraints = MeanField(),
-	iterations = 100,
+# ╔═╡ 44e2b7e8-135e-49a5-8e95-9440f32d7786
+Base.@kwdef struct InferenceContext
+	number_of_iterations = 50
+	limit_number_of_observations = 5
+	limit_number_of_components = 20
+end
+
+# ╔═╡ 434adab4-30fd-4d09-a168-78d08451766d
+ctx = InferenceContext()
+
+# ╔═╡ 2709183e-bd41-44d4-ba4e-d7511b3c4c0d
+function estimate_parameters(ctx::InferenceContext, column::Vector, result::Vector)
+	result = infer(
+		model = bayesian_regression(),
+		data = (
+			x = view(column, 1:ctx.limit_number_of_observations), 
+			y = view(result, 1:ctx.limit_number_of_observations)
+		),
+		initialization = init(),
+		returnvars = (a = KeepLast(), b = KeepLast()),
+		constraints = MeanField(),
+		iterations = ctx.number_of_iterations,
+		options = (limit_stack_depth = 500, )
+	)
+	return result.posteriors
+end
+
+# ╔═╡ 4ea22480-0685-44c0-a6ec-9c4e61dd6435
+function estimate_parameters(
+	ctx::InferenceContext, 
+	dataframe::DataFrame;
+	target::String
 )
+	variables = setdiff(names(df), (target, ))
+	result = dataframe[!, target]
+	return map(variables) do variable
+		column = dataframe[!, variable]
+		return variable => estimate_parameters(ctx, column, result)
+	end |> Dict
+end
 
-# ╔═╡ 7aa5dd2b-d191-4ed5-a6cf-893b51980fe9
-vague(GammaShapeRate)
-
-# ╔═╡ a56417f1-5e3c-49f2-8fd3-6412d16cd8ec
-@gif for iter in 1:length(result.posteriors[:a])
-	local pa = plot(title = "Posteriors for a $iter")
-	for i in 1:climit
-		plot!(pa, convert(Normal, result.posteriors[:a][iter][i]), fillalpha = 0.1, fill = 0, label = "a[$i]")
-	end
-	local pb = plot(title = "Posteriors for b $iter")
-	for i in 1:climit
-		plot!(pb, convert(Normal, result.posteriors[:b][iter][i]), fillalpha = 0.1, fill = 0, label = "b[$i]")
-	end
-	plot(pa, pb)
-end fps = 24
+# ╔═╡ 92e6f99b-2719-4a12-ac8c-95214ca988c8
+parameters = estimate_parameters(ctx, df; target = "price")
 
 # ╔═╡ 7c1e4466-dc97-49b7-a88b-fb3f83049453
-result.posteriors[:b][end][1] |> mean_var
+function plot_regression(df::DataFrame; variable::String, parameters::Dict, target)
+	p = plot(title = variable)
+	values = df[!, variable]
+	scatter!(p, values, df[!, target])
+	ndraws = 25
+	for i in 1:ndraws
+		a = rand(parameters[variable][:a])
+		b = rand(parameters[variable][:b])
+		plot!(p, values, values .* a .+ b, alpha = 0.05, color = :red, label = nothing)
+	end
+	return p
+end
+
+# ╔═╡ b8b1b064-d734-4806-b788-67d124da6a3b
+plot_regression(df, variable = "bedrooms", target = "price", parameters = parameters)
+
+# ╔═╡ fb64a743-3390-475e-92db-bf6e0a451650
+plot_regression(df, variable = "condition", target = "price", parameters = parameters)
+
+# ╔═╡ e867ec29-2723-4f23-8f50-23a85843694b
+function predict_price(variable::String, parameters::Dict, value)
+	m1 = @call_rule typeof(*)(:out, Marginalisation) (m_A = PointMass(value), m_in = parameters[variable][:a])
+	m2 = @call_rule typeof(+)(:out, Marginalisation) (m_in1 = m1, m_in2 = parameters[variable][:b])
+end
+
+# ╔═╡ bdab701f-0370-4447-ba27-e531b33f73f5
+function predict_price(to_predict)
+	predicted = map(collect(pairs(to_predict))) do (variable, value)
+		predict_price(variable, parameters, value)
+	end
+	return reduce((r, n) -> prod(GenericProd(), r, n), predicted)
+end
+
+# ╔═╡ 22886807-f98e-48bb-ba2d-2802b4c6a297
+function plot_prediction(prediction)
+	dist = convert(Normal, prediction)
+	ticks = [
+		quantile(dist, 0.05),
+		quantile(dist, 0.35),
+		quantile(dist, 0.5),
+		quantile(dist, 0.65),
+		quantile(dist, 0.95)
+	]
+	nticks = map(t -> string("\$", round(t, digits = 1)), ticks)
+	plot(
+		dist,
+		fill = 0, 
+		fillalpha = 0.1, 
+		yticks = nothing,
+		xticks = (ticks, nticks),
+		xrotation = -40
+	)
+	vline!([ticks[1]], color = :red, label = "5% - 95%")
+	vline!([ticks[5]], color = :red, label = nothing)
+	vline!([ticks[2]], color = :orange, label = "35% - 65%")
+	vline!([ticks[4]], color = :orange, label = nothing)
+	vline!([ticks[3]], color = :green, label = "average")
+end
+
+# ╔═╡ 0223582a-3a02-42c7-8029-bc9ef00718a0
+begin
+	to_predict = Dict(
+		"bedrooms" => 2,
+		"bathrooms" => 3,
+		"floors" => 1,
+		"renovated" => 1,
+		"yr_built" => 1200
+	)
+	
+	plot_prediction(predict_price(to_predict))
+end
+
+# ╔═╡ d6b844cb-48bd-4e8f-9002-d4e0979dcc26
+@call_rule typeof(*)(:out, Marginalisation) (m_A = PointMass(1000), m_in = parameters["bedrooms"][:a])
+
+# ╔═╡ ac2b9120-f124-45af-aa81-f62f363a1588
+function predict_row(df, index; target)
+	variables = setdiff(names(df), (target, ))
+	to_predict = map(variables) do variable 
+		variable => eachrow(df)[index][variable]
+	end |> Dict
+	return Dict(
+		"predicted" => predict_price(to_predict) |> mean_var,
+		"actual" => eachrow(df)[index][target]
+	)
+end
+
+# ╔═╡ b278cb31-7968-438c-b569-7df5d7c8db50
+row = eachrow(df)[1]
+
+# ╔═╡ 3040445f-d52a-4f98-8208-d18dc9a360ce
+predict_row(df, 6; target = "price")
 
 # ╔═╡ 00000000-0000-0000-0000-000000000001
 PLUTO_PROJECT_TOML_CONTENTS = """
@@ -2203,15 +2287,23 @@ version = "1.13.0+0"
 # ╔═╡ Cell order:
 # ╠═686176f0-21dd-11f1-aecf-99485f8b94d1
 # ╠═a67e8923-019e-4df1-9e40-1b5f4a540685
-# ╠═30fac690-3b1b-4635-bb71-f3afbd6e46f2
 # ╠═52ff4c65-be00-40c6-b5a0-a843d4f34518
-# ╠═0cf6043f-949a-4556-8f73-89d0ef4f45c0
-# ╠═d694b54e-0596-45fd-bab7-ad38a6c1f68e
-# ╠═ad962673-cbe9-4ddc-aecf-293c7037c895
-# ╠═c10379ec-aca3-45d7-9a81-b40f11a96dca
-# ╠═b202ef09-c1b6-43ce-b23e-a991917bdba1
-# ╠═7aa5dd2b-d191-4ed5-a6cf-893b51980fe9
-# ╠═a56417f1-5e3c-49f2-8fd3-6412d16cd8ec
+# ╠═e1971712-5d58-4f49-b4b6-0a4743414b46
+# ╠═44e2b7e8-135e-49a5-8e95-9440f32d7786
+# ╠═434adab4-30fd-4d09-a168-78d08451766d
+# ╠═2709183e-bd41-44d4-ba4e-d7511b3c4c0d
+# ╠═4ea22480-0685-44c0-a6ec-9c4e61dd6435
+# ╠═92e6f99b-2719-4a12-ac8c-95214ca988c8
 # ╠═7c1e4466-dc97-49b7-a88b-fb3f83049453
+# ╠═b8b1b064-d734-4806-b788-67d124da6a3b
+# ╠═fb64a743-3390-475e-92db-bf6e0a451650
+# ╠═e867ec29-2723-4f23-8f50-23a85843694b
+# ╠═bdab701f-0370-4447-ba27-e531b33f73f5
+# ╠═22886807-f98e-48bb-ba2d-2802b4c6a297
+# ╠═0223582a-3a02-42c7-8029-bc9ef00718a0
+# ╠═d6b844cb-48bd-4e8f-9002-d4e0979dcc26
+# ╠═ac2b9120-f124-45af-aa81-f62f363a1588
+# ╟─b278cb31-7968-438c-b569-7df5d7c8db50
+# ╠═3040445f-d52a-4f98-8208-d18dc9a360ce
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002
