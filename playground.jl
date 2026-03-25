@@ -5,34 +5,37 @@ using Markdown
 using InteractiveUtils
 
 # ╔═╡ 686176f0-21dd-11f1-aecf-99485f8b94d1
-using RxInfer, DataFrames, CSV, Plots, StatsPlots
+using RxInfer, DataFrames, CSV, Plots, StatsPlots, Rocket
 
 # ╔═╡ a67e8923-019e-4df1-9e40-1b5f4a540685
 df = DataFrame(CSV.File("Housing.csv"))
 
+# ╔═╡ e4c37937-84e7-4c65-bd9e-fc82e003bdc3
+
+
 # ╔═╡ 52ff4c65-be00-40c6-b5a0-a843d4f34518
-@model function bayesian_regression(x, y)
-	a ~ Uninformative()
-	b ~ Uninformative()
-	p ~ Uninformative()
-	
-	for i in 1:length(y)
-		m[i] ~ a * x[i] + b	
-		y[i] ~ Normal(mean = m[i], precision = p)
-	end
+@model function bayesian_regression(x, y, a_mean, a_var, b_mean, b_var)
+	a ~ Normal(mean = a_mean, var = a_var)
+	b ~ Normal(mean = b_mean, var = b_var)
+	y ~ Normal(mean = a * x + b, precision = 1e-12)
 end
 
 # ╔═╡ e1971712-5d58-4f49-b4b6-0a4743414b46
 @initialization function init()
-	μ(a) = Normal(mean = 0.0, variance = 1e4)
-	μ(b) = Normal(mean = 0.0, variance = 1e12)
-	q(p) = Gamma(shape = 1, rate = 1e-6)
+	q(a) = Normal(mean = 0.0, variance = 1e12)
+	q(b) = Normal(mean = 0.0, variance = 1e12)
+end
+
+# ╔═╡ a0b0ccc4-1741-43a4-a312-c818499d2100
+@autoupdates function transfer_priors()
+	a_mean, a_var = mean_var(q(a))
+	b_mean, b_var = mean_var(q(b))
 end
 
 # ╔═╡ 44e2b7e8-135e-49a5-8e95-9440f32d7786
 Base.@kwdef struct InferenceContext
-	number_of_iterations = 50
-	limit_number_of_observations = 5
+	number_of_iterations = 10
+	limit_number_of_observations = 20000
 	limit_number_of_components = 20
 end
 
@@ -41,19 +44,24 @@ ctx = InferenceContext()
 
 # ╔═╡ 2709183e-bd41-44d4-ba4e-d7511b3c4c0d
 function estimate_parameters(ctx::InferenceContext, column::Vector, result::Vector)
+	x = view(column, 1:ctx.limit_number_of_observations)
+	y = view(result, 1:ctx.limit_number_of_observations)
+	datastream = Rocket.labeled(Val((:y, :x)), combineLatest(from(y), from(x)))
 	result = infer(
 		model = bayesian_regression(),
-		data = (
-			x = view(column, 1:ctx.limit_number_of_observations), 
-			y = view(result, 1:ctx.limit_number_of_observations)
-		),
+		datastream = datastream,
+		autoupdates = transfer_priors(),
 		initialization = init(),
-		returnvars = (a = KeepLast(), b = KeepLast()),
+		returnvars = (:a, :b),
 		constraints = MeanField(),
+		keephistory = 1,
+		historyvars = (a = KeepLast(), b = KeepLast()),
 		iterations = ctx.number_of_iterations,
 		options = (limit_stack_depth = 500, )
 	)
-	return result.posteriors
+	a = result.history[:a][end]
+	b = result.history[:b][end]
+	return Dict(:a => a, :b => b)
 end
 
 # ╔═╡ 4ea22480-0685-44c0-a6ec-9c4e61dd6435
@@ -82,7 +90,7 @@ function plot_regression(df::DataFrame; variable::String, parameters::Dict, targ
 	for i in 1:ndraws
 		a = rand(parameters[variable][:a])
 		b = rand(parameters[variable][:b])
-		plot!(p, values, values .* a .+ b, alpha = 0.05, color = :red, label = nothing)
+		plot!(p, values, values .* a .+ b, alpha = 0.1, color = :red, label = nothing)
 	end
 	return p
 end
@@ -104,7 +112,19 @@ function predict_price(to_predict)
 	predicted = map(collect(pairs(to_predict))) do (variable, value)
 		predict_price(variable, parameters, value)
 	end
-	return reduce((r, n) -> prod(GenericProd(), r, n), predicted)
+	result = reduce(predicted) do reduced, next
+		return @call_rule typeof(+)(:out, Marginalisation) (
+			m_in1 = reduced, 
+			m_in2 = next
+		)
+	end
+
+	div_result = @call_rule typeof(*)(:out, Marginalisation) (
+		m_A = PointMass(1 / length(predicted)),
+		m_in = result
+	)
+	
+	return div_result
 end
 
 # ╔═╡ 22886807-f98e-48bb-ba2d-2802b4c6a297
@@ -124,7 +144,7 @@ function plot_prediction(prediction)
 		fillalpha = 0.1, 
 		yticks = nothing,
 		xticks = (ticks, nticks),
-		xrotation = -40
+		xrotation = -20
 	)
 	vline!([ticks[1]], color = :red, label = "5% - 95%")
 	vline!([ticks[5]], color = :red, label = nothing)
@@ -136,18 +156,16 @@ end
 # ╔═╡ 0223582a-3a02-42c7-8029-bc9ef00718a0
 begin
 	to_predict = Dict(
-		"bedrooms" => 2,
-		"bathrooms" => 3,
+		"bedrooms" => 3,
+		"bathrooms" => 1,
 		"floors" => 1,
-		"renovated" => 1,
-		"yr_built" => 1200
 	)
 	
-	plot_prediction(predict_price(to_predict))
+	predicted = predict_price(to_predict)
 end
 
-# ╔═╡ d6b844cb-48bd-4e8f-9002-d4e0979dcc26
-@call_rule typeof(*)(:out, Marginalisation) (m_A = PointMass(1000), m_in = parameters["bedrooms"][:a])
+# ╔═╡ 0f9760b9-34bb-46c8-927a-82ff3c457a81
+plot_prediction(predicted)
 
 # ╔═╡ ac2b9120-f124-45af-aa81-f62f363a1588
 function predict_row(df, index; target)
@@ -173,6 +191,7 @@ PLUTO_PROJECT_TOML_CONTENTS = """
 CSV = "336ed68f-0bac-5ca0-87d4-7b16caf5d00b"
 DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
 Plots = "91a5bcdd-55d7-5caf-9e0b-520d859cae80"
+Rocket = "df971d30-c9d6-4b37-b8ff-e965b2cb3a40"
 RxInfer = "86711068-29c9-4ff7-b620-ae75d7495b3d"
 StatsPlots = "f3b207a7-027a-5e70-b257-86293d7955fd"
 
@@ -180,6 +199,7 @@ StatsPlots = "f3b207a7-027a-5e70-b257-86293d7955fd"
 CSV = "~0.10.16"
 DataFrames = "~1.8.1"
 Plots = "~1.41.6"
+Rocket = "~1.8.4"
 RxInfer = "~4.7.1"
 StatsPlots = "~0.15.8"
 """
@@ -190,7 +210,7 @@ PLUTO_MANIFEST_TOML_CONTENTS = """
 
 julia_version = "1.12.5"
 manifest_format = "2.0"
-project_hash = "5494d7bb17ac7acc9805f443fb15a7ac136a9383"
+project_hash = "9a6bc0b964acd10ac82cef7db47e5f3b0f1b9ee0"
 
 [[deps.ADTypes]]
 git-tree-sha1 = "f7304359109c768cf32dc5fa2d371565bb63b68a"
@@ -2287,8 +2307,10 @@ version = "1.13.0+0"
 # ╔═╡ Cell order:
 # ╠═686176f0-21dd-11f1-aecf-99485f8b94d1
 # ╠═a67e8923-019e-4df1-9e40-1b5f4a540685
+# ╠═e4c37937-84e7-4c65-bd9e-fc82e003bdc3
 # ╠═52ff4c65-be00-40c6-b5a0-a843d4f34518
 # ╠═e1971712-5d58-4f49-b4b6-0a4743414b46
+# ╠═a0b0ccc4-1741-43a4-a312-c818499d2100
 # ╠═44e2b7e8-135e-49a5-8e95-9440f32d7786
 # ╠═434adab4-30fd-4d09-a168-78d08451766d
 # ╠═2709183e-bd41-44d4-ba4e-d7511b3c4c0d
@@ -2301,7 +2323,7 @@ version = "1.13.0+0"
 # ╠═bdab701f-0370-4447-ba27-e531b33f73f5
 # ╠═22886807-f98e-48bb-ba2d-2802b4c6a297
 # ╠═0223582a-3a02-42c7-8029-bc9ef00718a0
-# ╠═d6b844cb-48bd-4e8f-9002-d4e0979dcc26
+# ╠═0f9760b9-34bb-46c8-927a-82ff3c457a81
 # ╠═ac2b9120-f124-45af-aa81-f62f363a1588
 # ╟─b278cb31-7968-438c-b569-7df5d7c8db50
 # ╠═3040445f-d52a-4f98-8208-d18dc9a360ce
