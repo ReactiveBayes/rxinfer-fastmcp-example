@@ -9,12 +9,23 @@ using RxInfer, LinearAlgebra, DataFrames, CSV, Plots, StatsPlots, Rocket, Stable
 
 # ╔═╡ e7870ee3-0030-48cc-8d19-663a5d363b26
 md"""
-story block
+# Bayesian House Price Estimation with RxInfer.jl
+
+Imagine you're a real estate agent who wants to price houses — not with gut feeling, but with a principled probabilistic model that knows what it doesn't know. In this notebook, we'll build a Bayesian regression model that learns house prices from data and makes predictions *with uncertainty*. When information is missing, the model honestly says "I'm less sure" instead of silently guessing.
+
+We'll use [RxInfer.jl](https://rxinfer.ml) to perform variational inference via message passing — a fast, scalable approach to Bayesian learning.
+
+## Step 1: Defining the Housing Data
+First, let's define what a house looks like in our world.
 """
 
 # ╔═╡ cc68d16c-02c5-4e70-a73a-76239501dbb8
 """
-documentation block
+    House
+
+A house described by its key features: number of bedrooms and bathrooms, living area in square meters,
+number of floors, basement size, year built, and a quality label (1.0–5.0).
+Any field can be `missing` — our model handles incomplete information gracefully.
 """
 Base.@kwdef @concrete struct House 
 	bedrooms
@@ -28,7 +39,10 @@ end
 
 # ╔═╡ 3db7b6d0-e3d5-40e7-bd15-96e2d71ac7f0
 """
-documentatio block
+    to_vector(house::House)
+
+Convert a `House` into a numeric feature vector. Returns `Union{Float64, Missing}[]` so that
+missing fields propagate naturally through the pipeline.
 """
 to_vector(house::House) = Union{Float64, Missing}[
 	house.bedrooms,
@@ -55,7 +69,10 @@ end
 
 # ╔═╡ 06c2cf6e-a53f-469d-bcd3-ac0feff52163
 """
-documentation block
+    random_house(rng::AbstractRNG)
+
+Generate a random house with realistic-ish feature ranges. Single-story homes are more common
+(weighted sampling), and quality labels range from 1.0 to 5.0 in 0.1 increments.
 """
 function random_house(rng::AbstractRNG)
 	return House(
@@ -71,7 +88,10 @@ end
 
 # ╔═╡ 900e4af8-0ec7-444a-9a76-8a83e3c964d2
 """
-documentation block
+    PricedHouse
+
+A house paired with its market price. This is our labeled training data — the model will learn
+the mapping from house features to price.
 """
 Base.@kwdef @concrete struct PricedHouse 
 	house::House
@@ -93,7 +113,9 @@ end
 
 # ╔═╡ 6ddd238f-58c1-4aa0-bed4-a7fb5b31bcf2
 md"""
-story block
+## Step 2: Generating a Synthetic Housing Market
+
+We don't have a real dataset here — instead, we'll *be* the housing market. We generate 20,000 houses with random features and price them using a known (but noisy) formula. This lets us later verify whether our model recovers the true pricing dynamics.
 """
 
 # ╔═╡ 6a0185f7-1814-44e6-9945-b7e1917c13ea
@@ -105,12 +127,17 @@ end
 
 # ╔═╡ cd79dc9e-5ca3-4916-bbd9-e41262b1f572
 md"""
-story block
+## Step 3: Feature Engineering — Teaching the Model to See Patterns
+
+A linear model can only learn straight-line relationships. But house prices aren't that simple — a 5-star label doesn't cost exactly five times more than a 1-star. By adding *quadratic* basis functions alongside the linear ones, we give the model the vocabulary to express curved, non-linear pricing effects.
 """
 
 # ╔═╡ f4bb7806-e295-49dc-a737-d33142c3b6e1
 """
-docs block
+    linear_functions(x_dim)
+
+Create a vector of functions that extract each individual feature from the input vector `x`.
+These form the linear basis of our regression model.
 """
 function linear_functions(x_dim)
     return [(x) -> getindex(x, i) for i in 1:x_dim]
@@ -118,7 +145,10 @@ end
 
 # ╔═╡ 8aee9625-701a-4bd5-81ce-9cfba1bc713b
 """
-docs block
+    quadratic_functions(x_dim)
+
+Create a vector of functions that compute the *square* of each feature from the input vector `x`.
+These capture non-linear effects like the U-shaped relationship between quality label and price.
 """
 function quadratic_functions(x_dim)
     return [(x) -> getindex(x, i)^2 for i in 1:x_dim]
@@ -126,7 +156,10 @@ end
 
 # ╔═╡ 561acaab-cc32-4047-9f8b-2883700863ea
 """
-docs block
+    create_feature_functions(x_dim)
+
+Combine linear and quadratic basis functions into a single feature map.
+For `x_dim` input features, this produces `2 * x_dim` basis functions.
 """
 function create_feature_functions(x_dim)
     return vcat(linear_functions(x_dim), quadratic_functions(x_dim))
@@ -134,7 +167,15 @@ end
 
 # ╔═╡ 84c68d08-959c-460c-ab08-1648e51862ed
 md"""
-story block
+## Step 4: The Probabilistic Model
+
+Here's where the Bayesian magic happens. We define two RxInfer models:
+
+1. **Training model** (`feature_regression_unknown_noise`): Observes all the data and learns the weight vector `ω` and noise precision `s`. Each house price is modeled as a noisy linear combination of its basis-expanded features.
+
+2. **Predictive model** (`feature_regression_predictive`): Takes the learned posteriors and a *single* new house, then produces a predictive distribution for its price — not just a point estimate, but a full probability distribution that captures our remaining uncertainty.
+
+Both models use variational message passing under mean-field constraints, which makes inference fast and scalable.
 """
 
 # ╔═╡ 143b59f1-c2e7-4629-9b54-5f8f7e654964
@@ -170,7 +211,10 @@ end
 
 # ╔═╡ 8b65b0e0-7ae5-4ef5-9320-112e2bee5371
 """
-docs block
+    InferenceArguments
+
+Configuration for the inference engine: how many message-passing iterations to run
+and whether to track the variational free energy (a convergence diagnostic).
 """
 Base.@kwdef @concrete struct InferenceArguments
 	number_of_iterations = 10
@@ -179,7 +223,11 @@ end
 
 # ╔═╡ 9d86ab52-c744-42ce-a2f5-c3c2503df4e6
 """
-docs block
+    InferenceParameters
+
+The learned posterior parameters: mean and covariance of the weight vector `ω`,
+plus the shape and scale of the Gamma-distributed noise precision `s`.
+These are updated after each round of training.
 """
 Base.@kwdef mutable struct InferenceParameters 
 	omega_mean       :: Any
@@ -190,7 +238,10 @@ end
 
 # ╔═╡ a13f3013-cd34-48a3-9810-4f146218d498
 """
-docs block
+    InferenceState
+
+The full state of a trained model: inference settings, learned parameters, and a reference
+to the training data (needed later to impute missing values during prediction).
 """
 Base.@kwdef mutable struct InferenceState
 	arguments  :: InferenceArguments
@@ -201,7 +252,10 @@ end
 
 # ╔═╡ b9be4baa-f17f-490f-8439-a53de727f518
 """
-docs block
+    initial_state(arguments, phi_dim)
+
+Create a blank `InferenceState` with vague priors: zero-mean weights with very large variance
+(we know nothing yet) and a near-flat Gamma prior on noise precision.
 """
 function initial_state(arguments::InferenceArguments, phi_dim::Int)::InferenceState
     return InferenceState(
@@ -219,7 +273,12 @@ end
 
 # ╔═╡ 524651ff-6186-4dd4-a32b-9ef0e227178e
 """
-docs block
+    learn_parameters(arguments, priced_houses)
+
+The main training loop. Takes a vector of `PricedHouse` data, builds the feature-expanded
+design matrix, and runs variational inference to learn posterior distributions over the
+regression weights and observation noise. Returns both the raw inference result (for diagnostics)
+and the updated `InferenceState` (for making predictions).
 """
 function learn_parameters(
 	arguments::InferenceArguments, 
@@ -284,12 +343,14 @@ end
 
 # ╔═╡ 775297ad-2ba5-4088-9119-9e4de946c09d
 md"""
-story block
+## Step 5: Training the Model
+
+Time to let the model learn! We feed it all 20,000 houses and run 10 iterations of variational message passing. The algorithm will converge on posterior distributions for the weights and noise — essentially discovering the hidden pricing formula from data alone.
 """
 
 # ╔═╡ 2daa48c9-457b-4306-aa67-aa1e546a2d47
 md"""
-story block
+Let's set up our inference configuration and run the training. We also compute the **variational free energy** at each iteration — this is our convergence diagnostic. A decreasing free energy means the model is getting better at explaining the data.
 """
 
 # ╔═╡ 4bdf0bf6-1bfe-4446-a8a2-65fd5fbe95ba
@@ -305,7 +366,7 @@ inferred, state = learn_parameters(
 
 # ╔═╡ 90538577-7feb-4081-a090-0c0d153fee82
 md"""
-story block
+The free energy should drop and flatten out — a sign that the model has converged. Let's check:
 """
 
 # ╔═╡ ac4f3d9a-84fe-44b2-af48-b39e450f16fa
@@ -313,7 +374,9 @@ plot(inferred.free_energy[2:end], label = "Free energy")
 
 # ╔═╡ 04831a1f-e808-4ad2-8e49-7bef32f4aedc
 md"""
-story block
+## Step 6: Making Predictions with Uncertainty
+
+Now for the fun part — predicting prices for individual houses. Unlike a point-estimate regressor, our Bayesian model returns a *distribution*: a mean price and a standard deviation that tells us how confident (or uncertain) we are. This is invaluable in the real world — you'd price a well-understood suburban 3-bedroom very differently from an unusual property with missing data.
 """
 
 # ╔═╡ 661498f6-be59-4b55-8425-403d543336fb
@@ -325,7 +388,13 @@ end
 
 # ╔═╡ d0d8c8ef-d22a-458f-b612-99b4a5f76ee2
 """
-docs blocks
+    estimate_price(state, house)
+
+Predict the price of a `house` given the learned `state`. If any house features are `missing`,
+they are imputed with the training set mean and the corresponding weight uncertainty is inflated
+by 100x — the model becomes honestly less confident rather than silently wrong.
+
+Returns an `EstimatedPrice` with the predicted mean and standard deviation.
 """
 function estimate_price(state::InferenceState, house::House)
 	x = to_vector(house)
@@ -408,7 +477,11 @@ end
 
 # ╔═╡ 5a2b2e98-ac64-4430-a657-6fe6c2b0a6dc
 md"""
-story block
+## Step 7: Handling Missing Data Gracefully
+
+What if a buyer describes a house but doesn't know when it was built or what its quality label is? Most models would choke or silently fill in zeros. Our Bayesian approach does something smarter: it substitutes the population average and *widens its uncertainty* for those features. The result is a wider error bar — an honest "I can give you a range, but I'm less sure."
+
+Let's try it with a 3-bedroom, 1-bath house where `yr_built` and `label` are unknown:
 """
 
 # ╔═╡ e02ebdd2-a177-4f64-a308-f1501ea87fad
@@ -427,7 +500,11 @@ estimate_price(
 
 # ╔═╡ 38785830-e3ba-4979-bcde-f84854a9e2b4
 md"""
-story block
+## Wrapping Up
+
+We've built a complete Bayesian house pricing pipeline: synthetic data generation, feature engineering with basis expansion, variational inference for learning, and principled prediction with uncertainty quantification. The model doesn't just give you a number — it tells you how much to trust that number. And when information is missing, it adjusts its confidence accordingly.
+
+This is the power of probabilistic programming with RxInfer.jl: expressive models, fast inference, and honest uncertainty — all in a few dozen lines of Julia.
 """
 
 # ╔═╡ 00000000-0000-0000-0000-000000000001
@@ -2564,20 +2641,20 @@ version = "1.13.0+0"
 
 # ╔═╡ Cell order:
 # ╠═5b604af1-ea7c-4bae-ab9a-1d05752630d7
-# ╠═e7870ee3-0030-48cc-8d19-663a5d363b26
+# ╟─e7870ee3-0030-48cc-8d19-663a5d363b26
 # ╠═cc68d16c-02c5-4e70-a73a-76239501dbb8
 # ╠═3db7b6d0-e3d5-40e7-bd15-96e2d71ac7f0
 # ╠═1dd9ac47-d7a4-4555-9312-18f1439ef76c
 # ╠═06c2cf6e-a53f-469d-bcd3-ac0feff52163
 # ╠═900e4af8-0ec7-444a-9a76-8a83e3c964d2
 # ╠═9d9b7fa3-95e8-4972-af12-8166ad46e963
-# ╠═6ddd238f-58c1-4aa0-bed4-a7fb5b31bcf2
+# ╟─6ddd238f-58c1-4aa0-bed4-a7fb5b31bcf2
 # ╠═6a0185f7-1814-44e6-9945-b7e1917c13ea
-# ╠═cd79dc9e-5ca3-4916-bbd9-e41262b1f572
+# ╟─cd79dc9e-5ca3-4916-bbd9-e41262b1f572
 # ╠═f4bb7806-e295-49dc-a737-d33142c3b6e1
 # ╠═8aee9625-701a-4bd5-81ce-9cfba1bc713b
 # ╠═561acaab-cc32-4047-9f8b-2883700863ea
-# ╠═84c68d08-959c-460c-ab08-1648e51862ed
+# ╟─84c68d08-959c-460c-ab08-1648e51862ed
 # ╠═143b59f1-c2e7-4629-9b54-5f8f7e654964
 # ╠═e80841ec-292c-4109-b12f-24200897649f
 # ╠═a40cb803-8fdc-4845-8db5-187550a29600
@@ -2586,20 +2663,20 @@ version = "1.13.0+0"
 # ╠═a13f3013-cd34-48a3-9810-4f146218d498
 # ╠═b9be4baa-f17f-490f-8439-a53de727f518
 # ╠═524651ff-6186-4dd4-a32b-9ef0e227178e
-# ╠═775297ad-2ba5-4088-9119-9e4de946c09d
-# ╠═2daa48c9-457b-4306-aa67-aa1e546a2d47
+# ╟─775297ad-2ba5-4088-9119-9e4de946c09d
+# ╟─2daa48c9-457b-4306-aa67-aa1e546a2d47
 # ╠═4bdf0bf6-1bfe-4446-a8a2-65fd5fbe95ba
 # ╠═3aa800b6-9daf-43b8-8f75-696fdac4b9f0
-# ╠═90538577-7feb-4081-a090-0c0d153fee82
+# ╟─90538577-7feb-4081-a090-0c0d153fee82
 # ╠═ac4f3d9a-84fe-44b2-af48-b39e450f16fa
-# ╠═04831a1f-e808-4ad2-8e49-7bef32f4aedc
+# ╟─04831a1f-e808-4ad2-8e49-7bef32f4aedc
 # ╠═661498f6-be59-4b55-8425-403d543336fb
 # ╠═d0d8c8ef-d22a-458f-b612-99b4a5f76ee2
 # ╠═b45d35be-2b7e-4b71-ae53-85c2382d2487
 # ╠═a593cc02-d861-4677-979c-1b9dd9fc884d
 # ╠═9a86f971-ac04-4fa9-9c2a-c88c750fb913
-# ╠═5a2b2e98-ac64-4430-a657-6fe6c2b0a6dc
+# ╟─5a2b2e98-ac64-4430-a657-6fe6c2b0a6dc
 # ╠═e02ebdd2-a177-4f64-a308-f1501ea87fad
-# ╠═38785830-e3ba-4979-bcde-f84854a9e2b4
+# ╟─38785830-e3ba-4979-bcde-f84854a9e2b4
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002
