@@ -5,103 +5,137 @@ using Markdown
 using InteractiveUtils
 
 # ╔═╡ 5b604af1-ea7c-4bae-ab9a-1d05752630d7
-using RxInfer, LinearAlgebra, DataFrames, CSV, Plots, StatsPlots, Rocket, StableRNGs
+using RxInfer, LinearAlgebra, DataFrames, CSV, Plots, StatsPlots, Rocket, StableRNGs, ConcreteStructs, Random
 
 # ╔═╡ e7870ee3-0030-48cc-8d19-663a5d363b26
+md"""
+story block
+"""
 
+# ╔═╡ cc68d16c-02c5-4e70-a73a-76239501dbb8
+"""
+documentation block
+"""
+Base.@kwdef @concrete struct House 
+	bedrooms
+	bathrooms
+	sqft_living
+	floors
+	sqft_basement
+	yr_built
+	label
+end
+
+# ╔═╡ 3db7b6d0-e3d5-40e7-bd15-96e2d71ac7f0
+"""
+documentatio block
+"""
+to_vector(house::House) = Union{Float64, Missing}[
+	house.bedrooms,
+	house.bathrooms,
+	house.sqft_living,
+	house.floors,
+	house.sqft_basement,
+	house.yr_built,
+	house.label
+]
+
+# ╔═╡ 1dd9ac47-d7a4-4555-9312-18f1439ef76c
+function Base.convert(::Type{House}, dict::Dict)
+	return House(
+		bedrooms      = get(dict, "bedrooms", missing),
+		bathrooms     = get(dict, "bathrooms", missing),
+		sqft_living   = get(dict, "sqft_living", missing),
+		floors        = get(dict, "floors", missing),
+		sqft_basement = get(dict, "sqft_basement", missing),
+		yr_built      = get(dict, "yr_built", missing),
+		label         = get(dict, "label", missing),
+	)
+end
+
+# ╔═╡ 06c2cf6e-a53f-469d-bcd3-ac0feff52163
+"""
+documentation block
+"""
+function random_house(rng::AbstractRNG)
+	return House(
+		bedrooms = rand(rng, 1:4),
+		bathrooms = rand(rng, 1:3),
+		sqft_living = rand(rng, 40:120),
+		floors = rand(rng, [1, 1, 1, 1, 2, 2, 3]),
+		sqft_basement = rand(rng, 0:10),
+		yr_built = rand(rng, 1930:2025),
+		label = rand(rng, 1.0:0.1:5.0)
+	)
+end
+
+# ╔═╡ 900e4af8-0ec7-444a-9a76-8a83e3c964d2
+"""
+documentation block
+"""
+Base.@kwdef @concrete struct PricedHouse 
+	house::House
+	price::Number
+end
+
+# ╔═╡ 9d9b7fa3-95e8-4972-af12-8166ad46e963
+function price_house(rng::AbstractRNG, house::House)
+	price = (
+		(house.label - 2.5)^2 * rand(rng, Normal(40_000, 5_000)) +
+		house.bedrooms * rand(rng, Normal(7_000, 1_000)) + 
+		house.bathrooms * rand(rng, Normal(4_000, 1_000)) +
+		(house.sqft_living - 60) * rand(rng, Normal(2_000, 500)) + 
+		house.floors * rand(rng, Normal(25_000, 3_000)) + 
+		house.sqft_basement * rand(rng, Normal(2500, 100))
+	) + rand(rng, -40_000:1_000:40_000)
+	return PricedHouse(house, price)
+end
+
+# ╔═╡ 6ddd238f-58c1-4aa0-bed4-a7fb5b31bcf2
+md"""
+story block
+"""
+
+# ╔═╡ 6a0185f7-1814-44e6-9945-b7e1917c13ea
+begin 
+	nr_houses_to_generate = 20_000
+	rng = StableRNG(42)
+	houses = map(_ -> price_house(rng, random_house(rng)), 1:nr_houses_to_generate)
+end
+
+# ╔═╡ cd79dc9e-5ca3-4916-bbd9-e41262b1f572
+md"""
+story block
+"""
 
 # ╔═╡ f4bb7806-e295-49dc-a737-d33142c3b6e1
+"""
+docs block
+"""
 function linear_functions(x_dim)
     return [(x) -> getindex(x, i) for i in 1:x_dim]
 end
 
 # ╔═╡ 8aee9625-701a-4bd5-81ce-9cfba1bc713b
+"""
+docs block
+"""
 function quadratic_functions(x_dim)
     return [(x) -> getindex(x, i)^2 for i in 1:x_dim]
 end
 
-# ╔═╡ 484f96de-cd54-4371-a86b-43084861c54d
-function pairwise_functions(x_dim)
-    return [(x) -> getindex(x, i - 1) * getindex(x, i) for i in 2:x_dim]
-end
-
-# ╔═╡ 7d0f1978-19ca-4da6-a148-7a26b7e135b5
-function triplewise_functions(x_dim)
-    return [(x) -> getindex(x, i - 2) * getindex(x, i - 1) * getindex(x, i) for i in 3:x_dim]
-end
-
-# ╔═╡ 2c748d7a-9718-48ed-aca4-4c481bfc9a4f
-const FUNCTIONS_DISPATCH_TABLE = Dict(
-    "linear" => linear_functions,
-    "quadratic" => quadratic_functions,
-    "pairwise" => pairwise_functions,
-    "triplewise" => triplewise_functions
-)
-
-# ╔═╡ 0bbccc48-9cfa-49e8-94e4-63f134600fe0
-const MODIFIERS_DISPATCH_TABLE = Dict("tanh" => tanh, "abs" => abs, "sigmoid" => (x) -> inv(one(x) + exp(-x)))
-
 # ╔═╡ 561acaab-cc32-4047-9f8b-2883700863ea
-function create_feature_functions(functions, x_dim)
-    feature_functions = []
-    for fn_specification in functions
-        fns = split(fn_specification, ":")
-
-        if isempty(fns)
-            throw(ArgumentError("Invalid function specification: $fn_specification"))
-        end
-
-        function_name = fns[1]
-
-        if !haskey(FUNCTIONS_DISPATCH_TABLE, function_name)
-            throw(ArgumentError("Invalid function name: $function_name"))``
-        end
-
-        fn = FUNCTIONS_DISPATCH_TABLE[fns[1]](x_dim)
-
-        if length(fns) >= 2
-            # If we have a modifier, we compose it with the original function
-            # First apply the original function, then the modifier
-            if !haskey(MODIFIERS_DISPATCH_TABLE, fns[2])
-                throw(ArgumentError("Invalid modifier name: $fns[2]"))
-            end
-            # We have an array of functions, so we need to compose the modifier with each function
-            fn = map(f -> ComposedFunction(MODIFIERS_DISPATCH_TABLE[fns[2]], f), fn)
-        end
-
-        append!(feature_functions, fn)
-    end
-
-    return feature_functions
+"""
+docs block
+"""
+function create_feature_functions(x_dim)
+    return vcat(linear_functions(x_dim), quadratic_functions(x_dim))
 end
 
-# ╔═╡ dfab6cc9-2715-4aac-99b3-b26999646be9
-function create_row(rng)
-	bedrooms = rand(rng, 1:4)
-	bathrooms = rand(rng, 1:3)
-	sqft_living = rand(rng, 40:120)
-	floors = rand(rng, [1, 1, 1, 1, 2, 2, 3])
-	sqft_basement = rand(rng, 0:10)
-	yr_built = rand(rng, 1930:2025)
-	label = rand(rng, 1.0:0.1:5.0)
-	price = (
-		bedrooms * 10_000 + 
-		bathrooms * 5_000 +
-		sqft_living * 3_000 + 
-		floors * 30_000 + 
-		sqft_basement * 2500
-	) + rand(rng, -40_000:1_000:40_000)
-	return (;bedrooms, bathrooms, sqft_living, floors, sqft_basement, yr_built, label, price)
-end
-
-# ╔═╡ eb3130b4-6475-48bd-88f5-b81b6a900829
-function create_dataset(rng, n)
-	rows = map(_ -> create_row(rng), 1:n)
-	return DataFrame(rows)
-end
-
-# ╔═╡ 357a5f9e-a90a-4ea0-9ec9-a54bde55258e
-dataset = create_dataset(StableRNG(42), 20_000)
+# ╔═╡ 84c68d08-959c-460c-ab08-1648e51862ed
+md"""
+story block
+"""
 
 # ╔═╡ 143b59f1-c2e7-4629-9b54-5f8f7e654964
 @model function feature_regression_unknown_noise(ϕs, x, y, priors)
@@ -134,259 +168,277 @@ end
     q(μ, s, y) = q(μ, y)q(s)
 end
 
+# ╔═╡ 8b65b0e0-7ae5-4ef5-9320-112e2bee5371
+"""
+docs block
+"""
+Base.@kwdef @concrete struct InferenceArguments
+	number_of_iterations = 10
+	compute_free_energy = true
+end
+
+# ╔═╡ 9d86ab52-c744-42ce-a2f5-c3c2503df4e6
+"""
+docs block
+"""
+Base.@kwdef mutable struct InferenceParameters 
+	omega_mean       :: Any
+	omega_covariance :: Any
+	noise_shape      :: Any
+	noise_scale      :: Any
+end
+
+# ╔═╡ a13f3013-cd34-48a3-9810-4f146218d498
+"""
+docs block
+"""
+Base.@kwdef mutable struct InferenceState
+	arguments  :: InferenceArguments
+	parameters :: InferenceParameters
+	x_train    :: Any
+	y_train    :: Any
+end
+
 # ╔═╡ b9be4baa-f17f-490f-8439-a53de727f518
-function initial_state(arguments)
-    return Dict{String, Any}(
-        "functions" => arguments["functions"],
-        "number_of_iterations" => convert(Int, arguments["number_of_iterations"]),
-        "compute_free_energy" => convert(Bool, arguments["compute_free_energy"]),
-		"x_train" => nothing,
-		"y_train" => nothing
+"""
+docs block
+"""
+function initial_state(arguments::InferenceArguments, phi_dim::Int)::InferenceState
+    return InferenceState(
+        arguments = arguments,
+		parameters = InferenceParameters(
+        	omega_mean       = zeros(phi_dim), 
+			omega_covariance = 1e8 * Diagonal(ones(phi_dim)), 
+			noise_shape      = 1e-2, 
+			noise_scale      = 1e-2
+    	),
+		x_train = nothing,
+		y_train = nothing
     )
 end
 
-# ╔═╡ 87b03ccc-d227-4015-ae8e-2d475f695370
-function initial_parameters(arguments)
-    return Dict{String, Any}(
-        "omega_mean" => nothing, 
-		"omega_covariance" => nothing, 
-		"noise_shape" => nothing, 
-		"noise_scale" => nothing
-    )
-end
+# ╔═╡ 524651ff-6186-4dd4-a32b-9ef0e227178e
+"""
+docs block
+"""
+function learn_parameters(
+	arguments::InferenceArguments, 
+	priced_houses::Vector{<:PricedHouse}
+)
 
-# ╔═╡ 99b88a85-f589-4725-a5a1-b733807b9367
-function run_inference(state, parameters, x)
-    phi_s = create_feature_functions(state["functions"], length(x))
+	y = map(p -> p.price, priced_houses)
+	x = map(p -> to_vector(p.house), priced_houses)
+	
+	x_dim   = length(x[1])
+	phi_s   = create_feature_functions(x_dim)
+	phi_dim = length(phi_s)
 
-    omega_distribution = MvNormalMeanCovariance(
-		copy(parameters["omega_mean"]), copy(parameters["omega_covariance"])
+	state = initial_state(arguments, phi_dim)
+
+	omega_distribution = MvNormalMeanCovariance(
+		state.parameters.omega_mean, 
+		state.parameters.omega_covariance
 	)
     noise_distribution = GammaShapeScale(
-		copy(parameters["noise_shape"]), copy(parameters["noise_scale"])
+		state.parameters.noise_shape, 
+		state.parameters.noise_scale
 	)
 
-    priors = Dict(:ω => omega_distribution, :s => noise_distribution)
-
-    # Create initialization for the inference
-    init = @initialization begin
-        μ(ω) = MvNormalMeanCovariance(parameters["omega_mean"], parameters["omega_covariance"])
-        q(s) = GammaShapeScale(parameters["noise_shape"], parameters["noise_scale"])
-    end
-
-	xd = copy(x)
-	
-	for i in eachindex(xd)
-		if x[i] === missing
-			xd[i] = mean(getindex.(state["x_train"], i))
-			omega_distribution.Σ[i, i] *= 100
-		end
+	# Create initialization for the inference
+	# We run loopy belief propagation, that requires initial state 
+	# We simply use our priors as our initial state
+	init = @initialization begin
+		μ(ω) = omega_distribution
+		q(s) = noise_distribution
 	end
 
-    inference_results = infer(
-        model = feature_regression_predictive(ϕs = phi_s, priors = priors, x = xd),
-        data = (y = UnfactorizedData(missing),),
-        predictvars = (y = KeepLast(), ),
-		returnvars = (μ = KeepLast(), ),
-        initialization = init,
-        iterations = state["number_of_iterations"],
-        constraints = feature_regressions_predictive_constraints()
-    )
+	priors = Dict(
+		:ω => omega_distribution, 
+		:s => noise_distribution
+	)
 
-    result = Dict(
-        "y_mean" => mean(inference_results.predictions[:y]), 
-		"y_variance" => var(inference_results.predictions[:y]),
-		"y_std" => std(inference_results.predictions[:y]),
-		"m_mean" => mean(inference_results.posteriors[:μ]), 
-		"m_variance" => var(inference_results.posteriors[:μ]),
-		"m_std" => std(inference_results.posteriors[:μ])
-    )
+	result = infer(
+		model = feature_regression_unknown_noise(
+			ϕs = phi_s, priors = priors, x = x
+		),
+		data           = (y = y,),
+		initialization = init,
+		returnvars     = (ω = KeepLast(), s = KeepLast()),
+		iterations     = state.arguments.number_of_iterations,
+		constraints    = MeanField(),
+		options        = (limit_stack_depth = 300,),
+		free_energy    = state.arguments.compute_free_energy,
+	)
+
+	state.x_train = x
+	state.y_train = y
+	state.parameters = InferenceParameters(
+		omega_mean       = mean(result.posteriors[:ω]),
+		omega_covariance = cov(result.posteriors[:ω]),
+		noise_shape      = shape(result.posteriors[:s]),
+		noise_scale      = scale(result.posteriors[:s])
+	)
 
     return result, state
 end
 
-# ╔═╡ 524651ff-6186-4dd4-a32b-9ef0e227178e
-function run_learning(state, parameters, y, x)
-	
-    if isempty(x) || isempty(y)
-		error("Input cannot be empty")
-	end
-	
-	x_dim = length(x[1])
-	phi_s = create_feature_functions(state["functions"], x_dim)
-	phi_dim = length(phi_s)
+# ╔═╡ 775297ad-2ba5-4088-9119-9e4de946c09d
+md"""
+story block
+"""
 
-	omega_mean = @something(parameters["omega_mean"], zeros(phi_dim))
-	omega_covariance = @something(parameters["omega_covariance"], 1e8 * Diagonal(ones(phi_dim)))
-	noise_shape = @something(parameters["noise_shape"], 1e-2)
-	noise_scale = @something(parameters["noise_scale"], 1e-2)
-
-	# Create initialization for the inference
-	init = @initialization begin
-		μ(ω) = MvNormalMeanCovariance(omega_mean, omega_covariance)
-		q(s) = GammaShapeScale(noise_shape, noise_scale)
-	end
-
-	priors = Dict(
-		:ω => MvNormalMeanCovariance(omega_mean, omega_covariance), :s => GammaShapeScale(noise_shape, noise_scale)
-	)
-
-	inference_results = infer(
-		model = feature_regression_unknown_noise(ϕs = phi_s, priors = priors, x = x),
-		data = (y = y,),
-		initialization = init,
-		returnvars = (ω = KeepLast(), s = KeepLast()),
-		iterations = state["number_of_iterations"],
-		constraints = MeanField(),
-		options = (limit_stack_depth = 300,),
-		free_energy = state["compute_free_energy"],
-	)
-
-	state["x_train"] = x
-	state["y_train"] = y
-
-	parameters = Dict(
-		"omega_mean" => mean(inference_results.posteriors[:ω]),
-		"omega_covariance" => cov(inference_results.posteriors[:ω]),
-		"noise_shape" => shape(inference_results.posteriors[:s]),
-		"noise_scale" => scale(inference_results.posteriors[:s])
-	)
-
-    result = Dict(
-        "omega_mean" => parameters["omega_mean"],
-        "omega_covariance" => parameters["omega_covariance"],
-        "noise_shape" => parameters["noise_shape"],
-        "noise_scale" => parameters["noise_scale"]
-    )
-
-    if state["compute_free_energy"]
-        result["free_energy"] = inference_results.free_energy
-    end
-
-    return result, state, parameters
-end
-
-# ╔═╡ 32e5aa4b-729e-4718-a944-610998099ac5
-df_original = DataFrame(CSV.File("Housing.csv"))
-
-# ╔═╡ d89ca0fc-9076-4326-9541-d3da8b7fec44
-df = dataset
-
-# ╔═╡ 5ff8b6da-1c3f-4b83-b2db-3c97bbdc6bd7
-target = "price"
-
-# ╔═╡ 88f10565-2e10-4431-9d91-173cc908353e
-columns = setdiff(names(df), (target, ))
-
-# ╔═╡ 519a75df-4dc3-4d95-8163-cab2adcd69f8
-train_test_split = 0.95
-
-# ╔═╡ 32b749d1-617a-4495-a810-2d8c9efe448a
-ntrain = round(Int, size(df, 1) * train_test_split)
-
-# ╔═╡ e34c612b-7b9d-4e8b-a9c9-9bacf31ed9d9
-ntest = size(df, 1) - ntrain
-
-# ╔═╡ fa1614dd-167c-4e6a-b5de-3a591bfd2f57
-x_train = df[1:ntrain, columns] |> Matrix |> eachrow .|> collect
-
-# ╔═╡ ad7ee7b1-ab15-4c9a-95eb-ec8a89a1211a
-x_test = df[ntrain+1:end, columns] |> Matrix |> eachrow .|> collect
-
-# ╔═╡ 25ac7ecd-86e8-4dfb-93db-5b39531edc9b
-y_train = df[1:ntrain, target] |> Vector
-
-# ╔═╡ 8d22cfcc-5cda-4185-9d1b-115bb703d629
-y_test = df[ntrain+1:end, target] |> Vector 
+# ╔═╡ 2daa48c9-457b-4306-aa67-aa1e546a2d47
+md"""
+story block
+"""
 
 # ╔═╡ 4bdf0bf6-1bfe-4446-a8a2-65fd5fbe95ba
-arguments = Dict(
-	"functions" => ["linear", "quadratic"],
-	"number_of_iterations" => 10,
-	"compute_free_energy" => true
+arguments = InferenceArguments(
+	number_of_iterations = 10,
+	compute_free_energy = true
 )
-
-# ╔═╡ 039f67a1-d169-4862-92af-717d4d0ae5b0
-state = initial_state(arguments)
-
-# ╔═╡ 7a6b49a1-180c-42e1-b3f0-3efb195a219c
-parameters = initial_parameters(arguments)
 
 # ╔═╡ 3aa800b6-9daf-43b8-8f75-696fdac4b9f0
-result_learned, state_learned, parameters_learned = run_learning(
-	state, parameters, y_train, x_train
+inferred, state = learn_parameters(
+	arguments, houses
 )
 
+# ╔═╡ 90538577-7feb-4081-a090-0c0d153fee82
+md"""
+story block
+"""
+
 # ╔═╡ ac4f3d9a-84fe-44b2-af48-b39e450f16fa
-plot(result_learned["free_energy"][3:end])
+plot(inferred.free_energy[2:end], label = "Free energy")
 
-# ╔═╡ f5d69a63-442d-4259-8463-80c5755d1a06
-GammaShapeScale(
-	parameters_learned["noise_shape"],
-	parameters_learned["noise_scale"]
-) |> mean_var
+# ╔═╡ 04831a1f-e808-4ad2-8e49-7bef32f4aedc
+md"""
+story block
+"""
 
-# ╔═╡ 608daf2e-bb8a-463f-ad98-78a8e43cac21
-GammaShapeScale(
-	1e4, 1e-2
-) |> mean_var
+# ╔═╡ 661498f6-be59-4b55-8425-403d543336fb
+Base.@kwdef @concrete struct EstimatedPrice 
+	house::House
+	price
+	price_std
+end
+
+# ╔═╡ d0d8c8ef-d22a-458f-b612-99b4a5f76ee2
+"""
+docs blocks
+"""
+function estimate_price(state::InferenceState, house::House)
+	x = to_vector(house)
+    phi_s = create_feature_functions(length(x))
+
+	# Copy just in case, since we may modify the prior based if the 
+	# observation contains missings or not
+    omega_distribution = MvNormalMeanCovariance(
+		copy(state.parameters.omega_mean), 
+		copy(state.parameters.omega_covariance)
+	)
+    noise_distribution = GammaShapeScale(
+		copy(state.parameters.noise_shape), 
+		copy(state.parameters.noise_scale)
+	)
+
+    priors = Dict(
+		:ω => omega_distribution, 
+		:s => noise_distribution
+	)
+
+	for i in eachindex(x)
+		# If some of the component is missing, replace it with dataset average
+		# plus increase the uncertainty of this component 
+		if x[i] === missing
+			x[i] = mean(getindex.(state.x_train, i))
+			omega_distribution.Σ[i, i] *= 100
+		end
+	end
+
+	# Create initialization for the inference
+	# We run loopy belief propagation, that requires initial state 
+	# We simply use our priors as our initial state
+    init = @initialization begin
+        μ(ω) = omega_distribution
+        q(s) = noise_distribution
+    end
+
+    result = infer(
+        model = feature_regression_predictive(
+			ϕs = phi_s, priors = priors, x = x
+		),
+        data           = (y = UnfactorizedData(missing),),
+        predictvars    = (y = KeepLast(), ),
+		returnvars     = (μ = KeepLast(), ),
+        initialization = init,
+        iterations     = state.arguments.number_of_iterations,
+        constraints    = feature_regressions_predictive_constraints()
+    )
+
+    return EstimatedPrice(
+		house = house,
+		price = mean(result.posteriors[:μ]),
+		price_std = std(result.predictions[:y])
+	)
+end
 
 # ╔═╡ b45d35be-2b7e-4b71-ae53-85c2382d2487
-index_to_test = 1
+index_to_estimate = 1
 
 # ╔═╡ a593cc02-d861-4677-979c-1b9dd9fc884d
-result_inference, state_inference = run_inference(
-	state_learned, 
-	parameters_learned,
-	x_test[index_to_test]
+estimated = estimate_price(
+	state, 
+	houses[index_to_estimate].house
 )
 
 # ╔═╡ 9a86f971-ac04-4fa9-9c2a-c88c750fb913
-let p = plot() 
+let p = plot(title = "Model predictions with uncertainty") 
 	indices = 1:10
 	results = map(indices) do i 
-		r, _ = run_inference(
-			state_learned, 
-			parameters_learned,
-			x_test[i]
-		)
-		return (x = i, y = r, t = y_test[i])
+		e = estimate_price(state, houses[i].house)
+		return (x = i, e = e, r = houses[i].price)
 	end
 	xs = map(r -> r.x, results)
-	ys = map(r -> r.y["m_mean"], results)
-	ye = map(r -> r.y["y_std"], results)
-	mse = sqrt(sum(r -> (r.y["m_mean"] - r.t)^2, results))
+	ys = map(r -> r.e.price, results)
+	ye = map(r -> r.e.price_std, results)
 	scatter!(p, xs, ys, yerror = ye, label = "predicted")
-	scatter!(p, xs, y_test[xs], label = "real")
+	scatter!(p, xs, map(h -> h.price, houses[xs]), label = "real")
 end
 
-# ╔═╡ 4d0247b9-2f7a-4b62-8a8d-396ce3367208
-x_test[1]
+# ╔═╡ 5a2b2e98-ac64-4430-a657-6fe6c2b0a6dc
+md"""
+story block
+"""
 
-# ╔═╡ 3aa8e077-dc27-4ffa-a5de-a3c71d22bc26
-run_inference(
-	state_learned, 
-	parameters_learned,
-	[2.0,1.0,72.0,1.0,5.0,1978.0,3.7]
-)
-
-# ╔═╡ 9cecdd56-3cd6-49f2-96ed-e61786a74e98
-run_inference(
-	state_learned, 
-	parameters_learned,
-	[2.0,1.0,missing,1.0,5.0,1978.0,missing]
+# ╔═╡ e02ebdd2-a177-4f64-a308-f1501ea87fad
+estimate_price(
+	state,
+	convert(House, Dict(
+		"bedrooms" => 3,
+		"bathrooms" => 1,
+		"sqft_living" => 120,
+		"floors" => 2,
+		"sqft_basement" => 30,
+		"yr_built" => missing, 
+		"label" => missing
+	))
 )
 
 # ╔═╡ 38785830-e3ba-4979-bcde-f84854a9e2b4
-state_learned["x_train"]
+md"""
+story block
+"""
 
 # ╔═╡ 00000000-0000-0000-0000-000000000001
 PLUTO_PROJECT_TOML_CONTENTS = """
 [deps]
 CSV = "336ed68f-0bac-5ca0-87d4-7b16caf5d00b"
+ConcreteStructs = "2569d6c7-a4a2-43d3-a901-331e8e4be471"
 DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 Plots = "91a5bcdd-55d7-5caf-9e0b-520d859cae80"
+Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
 Rocket = "df971d30-c9d6-4b37-b8ff-e965b2cb3a40"
 RxInfer = "86711068-29c9-4ff7-b620-ae75d7495b3d"
 StableRNGs = "860ef19b-820b-49d6-a774-d7a799459cd3"
@@ -394,6 +446,7 @@ StatsPlots = "f3b207a7-027a-5e70-b257-86293d7955fd"
 
 [compat]
 CSV = "~0.10.16"
+ConcreteStructs = "~0.2.3"
 DataFrames = "~1.8.1"
 Plots = "~1.41.6"
 Rocket = "~1.8.4"
@@ -408,7 +461,7 @@ PLUTO_MANIFEST_TOML_CONTENTS = """
 
 julia_version = "1.12.5"
 manifest_format = "2.0"
-project_hash = "7a94c88049a815a0ac88e7591a7e73409c9b336b"
+project_hash = "00a5f16bd630643288cdc7179ec7a27e0a3c2c67"
 
 [[deps.ADTypes]]
 git-tree-sha1 = "f7304359109c768cf32dc5fa2d371565bb63b68a"
@@ -699,6 +752,11 @@ version = "1.3.0+1"
 git-tree-sha1 = "bce26c3dab336582805503bed209faab1c279768"
 uuid = "b152e2b5-7a66-4b01-a709-34e65c35f657"
 version = "0.1.4"
+
+[[deps.ConcreteStructs]]
+git-tree-sha1 = "f749037478283d372048690eb3b5f92a79432b34"
+uuid = "2569d6c7-a4a2-43d3-a901-331e8e4be471"
+version = "0.2.3"
 
 [[deps.ConcurrentUtilities]]
 deps = ["Serialization", "Sockets"]
@@ -2507,47 +2565,41 @@ version = "1.13.0+0"
 # ╔═╡ Cell order:
 # ╠═5b604af1-ea7c-4bae-ab9a-1d05752630d7
 # ╠═e7870ee3-0030-48cc-8d19-663a5d363b26
+# ╠═cc68d16c-02c5-4e70-a73a-76239501dbb8
+# ╠═3db7b6d0-e3d5-40e7-bd15-96e2d71ac7f0
+# ╠═1dd9ac47-d7a4-4555-9312-18f1439ef76c
+# ╠═06c2cf6e-a53f-469d-bcd3-ac0feff52163
+# ╠═900e4af8-0ec7-444a-9a76-8a83e3c964d2
+# ╠═9d9b7fa3-95e8-4972-af12-8166ad46e963
+# ╠═6ddd238f-58c1-4aa0-bed4-a7fb5b31bcf2
+# ╠═6a0185f7-1814-44e6-9945-b7e1917c13ea
+# ╠═cd79dc9e-5ca3-4916-bbd9-e41262b1f572
 # ╠═f4bb7806-e295-49dc-a737-d33142c3b6e1
 # ╠═8aee9625-701a-4bd5-81ce-9cfba1bc713b
-# ╠═484f96de-cd54-4371-a86b-43084861c54d
-# ╠═7d0f1978-19ca-4da6-a148-7a26b7e135b5
-# ╠═2c748d7a-9718-48ed-aca4-4c481bfc9a4f
-# ╠═0bbccc48-9cfa-49e8-94e4-63f134600fe0
 # ╠═561acaab-cc32-4047-9f8b-2883700863ea
-# ╠═dfab6cc9-2715-4aac-99b3-b26999646be9
-# ╠═eb3130b4-6475-48bd-88f5-b81b6a900829
-# ╠═357a5f9e-a90a-4ea0-9ec9-a54bde55258e
+# ╠═84c68d08-959c-460c-ab08-1648e51862ed
 # ╠═143b59f1-c2e7-4629-9b54-5f8f7e654964
 # ╠═e80841ec-292c-4109-b12f-24200897649f
 # ╠═a40cb803-8fdc-4845-8db5-187550a29600
+# ╠═8b65b0e0-7ae5-4ef5-9320-112e2bee5371
+# ╠═9d86ab52-c744-42ce-a2f5-c3c2503df4e6
+# ╠═a13f3013-cd34-48a3-9810-4f146218d498
 # ╠═b9be4baa-f17f-490f-8439-a53de727f518
-# ╠═87b03ccc-d227-4015-ae8e-2d475f695370
-# ╠═99b88a85-f589-4725-a5a1-b733807b9367
 # ╠═524651ff-6186-4dd4-a32b-9ef0e227178e
-# ╠═32e5aa4b-729e-4718-a944-610998099ac5
-# ╠═d89ca0fc-9076-4326-9541-d3da8b7fec44
-# ╠═5ff8b6da-1c3f-4b83-b2db-3c97bbdc6bd7
-# ╠═88f10565-2e10-4431-9d91-173cc908353e
-# ╠═519a75df-4dc3-4d95-8163-cab2adcd69f8
-# ╠═32b749d1-617a-4495-a810-2d8c9efe448a
-# ╠═e34c612b-7b9d-4e8b-a9c9-9bacf31ed9d9
-# ╠═fa1614dd-167c-4e6a-b5de-3a591bfd2f57
-# ╠═ad7ee7b1-ab15-4c9a-95eb-ec8a89a1211a
-# ╠═25ac7ecd-86e8-4dfb-93db-5b39531edc9b
-# ╠═8d22cfcc-5cda-4185-9d1b-115bb703d629
+# ╠═775297ad-2ba5-4088-9119-9e4de946c09d
+# ╠═2daa48c9-457b-4306-aa67-aa1e546a2d47
 # ╠═4bdf0bf6-1bfe-4446-a8a2-65fd5fbe95ba
-# ╠═039f67a1-d169-4862-92af-717d4d0ae5b0
-# ╠═7a6b49a1-180c-42e1-b3f0-3efb195a219c
 # ╠═3aa800b6-9daf-43b8-8f75-696fdac4b9f0
+# ╠═90538577-7feb-4081-a090-0c0d153fee82
 # ╠═ac4f3d9a-84fe-44b2-af48-b39e450f16fa
-# ╠═f5d69a63-442d-4259-8463-80c5755d1a06
-# ╠═608daf2e-bb8a-463f-ad98-78a8e43cac21
+# ╠═04831a1f-e808-4ad2-8e49-7bef32f4aedc
+# ╠═661498f6-be59-4b55-8425-403d543336fb
+# ╠═d0d8c8ef-d22a-458f-b612-99b4a5f76ee2
 # ╠═b45d35be-2b7e-4b71-ae53-85c2382d2487
 # ╠═a593cc02-d861-4677-979c-1b9dd9fc884d
 # ╠═9a86f971-ac04-4fa9-9c2a-c88c750fb913
-# ╠═4d0247b9-2f7a-4b62-8a8d-396ce3367208
-# ╠═3aa8e077-dc27-4ffa-a5de-a3c71d22bc26
-# ╠═9cecdd56-3cd6-49f2-96ed-e61786a74e98
+# ╠═5a2b2e98-ac64-4430-a657-6fe6c2b0a6dc
+# ╠═e02ebdd2-a177-4f64-a308-f1501ea87fad
 # ╠═38785830-e3ba-4979-bcde-f84854a9e2b4
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002
