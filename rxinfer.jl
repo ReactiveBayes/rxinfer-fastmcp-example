@@ -12,6 +12,7 @@ include("example.jl")
 
 # --- Generate test CSV ---
 
+if get(ENV, "SKIP_TEST_CSV", "false") != "true"
 let
     test_file = "test_houses.csv"
     @info "Generating test CSV with 20,000 entries..."
@@ -29,6 +30,9 @@ let
     )
     CSV.write(test_file, df)
     @info "Test CSV available at: $test_file ($(nrow(df)) rows)"
+end
+else
+    @info "Skipping test CSV generation (SKIP_TEST_CSV=true)"
 end
 
 # --- Global State ---
