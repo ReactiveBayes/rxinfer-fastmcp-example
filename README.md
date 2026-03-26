@@ -42,6 +42,26 @@ using Pluto; Pluto.run()
 
 This opens a browser-based environment where you can open `example.jl`, tweak the model, and see results update in real time.
 
+## Claude Desktop
+
+To connect via SSE in Claude Desktop, add the following to your [Claude Desktop MCP configuration](https://modelcontextprotocol.io/quickstart/user):
+
+```json
+{
+  "mcpServers": {
+    "rxinfer": {
+      "command": "npx",
+      "args": [
+        "mcp-remote@latest",
+        "http://localhost:8001/sse"
+      ]
+    }
+  }
+}
+```
+
+Make sure the server is running before launching Claude Desktop.
+
 ## Claude Code
 
 A `.mcp.json` is included that connects to the server on `localhost:8001`. Start the server first in a separate terminal:
