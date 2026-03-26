@@ -71,3 +71,20 @@ uv run fastmcp run main.py:mcp --transport sse --port 8001
 ```
 
 Then launch Claude Code in the project directory. The server will be detected automatically — approve it when prompted.
+
+## Example conversation
+
+Ask Claude to run Bayesian analysis on the test dataset (created automatically when starting the server)
+
+<img width="883" height="1026" alt="Screenshot 2026-03-26 at 11 20 36" src="https://github.com/user-attachments/assets/c9fe90f9-f221-48ec-a964-f73b63225c6e" />
+
+Prompt it to estimate a price for some house, some features might be missing
+
+<img width="865" height="1201" alt="Screenshot 2026-03-26 at 11 20 22" src="https://github.com/user-attachments/assets/6cec6da5-bb9b-4f1b-8172-afdb1c092ff3" />
+
+Think of the situation where you actually got the missing data about the previously unknown features and check the new result
+
+<img width="860" height="1000" alt="Screenshot 2026-03-26 at 11 01 23" src="https://github.com/user-attachments/assets/e65f14e4-a80f-472e-8f77-6de122da1f16" />
+
+
+
