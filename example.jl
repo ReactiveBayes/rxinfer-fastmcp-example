@@ -30,9 +30,9 @@ Any field can be `missing` — our model handles incomplete information graceful
 Base.@kwdef @concrete struct House 
 	bedrooms
 	bathrooms
-	sqft_living
+	living_area
 	floors
-	sqft_basement
+	basement_area
 	yr_built
 	label
 end
@@ -47,9 +47,9 @@ missing fields propagate naturally through the pipeline.
 to_vector(house::House) = Union{Float64, Missing}[
 	house.bedrooms,
 	house.bathrooms,
-	house.sqft_living,
+	house.living_area,
 	house.floors,
-	house.sqft_basement,
+	house.basement_area,
 	house.yr_built,
 	house.label
 ]
@@ -59,9 +59,9 @@ function Base.convert(::Type{House}, dict::Dict)
 	return House(
 		bedrooms      = get(dict, "bedrooms", missing),
 		bathrooms     = get(dict, "bathrooms", missing),
-		sqft_living   = get(dict, "sqft_living", missing),
+		living_area   = get(dict, "living_area", missing),
 		floors        = get(dict, "floors", missing),
-		sqft_basement = get(dict, "sqft_basement", missing),
+		basement_area = get(dict, "basement_area", missing),
 		yr_built      = get(dict, "yr_built", missing),
 		label         = get(dict, "label", missing),
 	)
@@ -78,9 +78,9 @@ function random_house(rng::AbstractRNG)
 	return House(
 		bedrooms = rand(rng, 1:4),
 		bathrooms = rand(rng, 1:3),
-		sqft_living = rand(rng, 40:120),
+		living_area = rand(rng, 40:220),
 		floors = rand(rng, [1, 1, 1, 1, 2, 2, 3]),
-		sqft_basement = rand(rng, 0:10),
+		basement_area = rand(rng, 0:10),
 		yr_built = rand(rng, 1930:2025),
 		label = rand(rng, 1.0:0.1:5.0)
 	)
@@ -101,13 +101,14 @@ end
 # ╔═╡ 9d9b7fa3-95e8-4972-af12-8166ad46e963
 function price_house(rng::AbstractRNG, house::House)
 	price = (
-		(house.label - 2.5)^2 * rand(rng, Normal(40_000, 5_000)) +
+		(house.yr_built - 1920) * rand(rng, Normal(1_000, 100)) +
+		(house.label)^2 * rand(rng, Normal(3_500, 1_000)) +
 		house.bedrooms * rand(rng, Normal(7_000, 1_000)) + 
 		house.bathrooms * rand(rng, Normal(4_000, 1_000)) +
-		(house.sqft_living - 60) * rand(rng, Normal(2_000, 500)) + 
+		(house.living_area - 80) * rand(rng, Normal(4_000, 500)) + 
 		house.floors * rand(rng, Normal(25_000, 3_000)) + 
-		house.sqft_basement * rand(rng, Normal(2500, 100))
-	) + rand(rng, -40_000:1_000:40_000)
+		house.basement_area * rand(rng, Normal(2500, 100))
+	) + rand(rng, 40_000:1_000:80_000)
 	return PricedHouse(house, price)
 end
 
@@ -488,13 +489,13 @@ Let's try it with a 3-bedroom, 1-bath house where `yr_built` and `label` are unk
 estimate_price(
 	state,
 	convert(House, Dict(
-		"bedrooms" => 3,
+		"bedrooms" => 2,
 		"bathrooms" => 1,
-		"sqft_living" => 120,
-		"floors" => 2,
-		"sqft_basement" => 30,
-		"yr_built" => missing, 
-		"label" => missing
+		"living_area" => 120,
+		"floors" => 1,
+		"basement_area" => 30,
+		"yr_built" => 1980, 
+		"label" => 5.0
 	))
 )
 

@@ -1,11 +1,18 @@
-# RxInfer FastMCP example
+# RxInfer FastMCP Example
 
-This repository contains sample code to demonstrate how to call RxInfer 
-from Python's code and return the result to an LLM with MCP protocol.
+An MCP server that exposes Bayesian house price estimation powered by [RxInfer.jl](https://rxinfer.ml). Point it at a CSV of housing data, and it learns a probabilistic pricing model that predicts prices with honest uncertainty -- when information is missing, the model says "I'm less sure" instead of silently guessing.
 
-The project uses [FastMCP](https://gofastmcp.com/) to implement 
-the MCP server. The python dependencies are managed with `uv` and the Julia-Python 
-interaction is done with [JuliaCall](https://juliapy.github.io/PythonCall.jl/stable/juliacall/#Installation).
+Built with [FastMCP](https://gofastmcp.com/), [JuliaCall](https://juliapy.github.io/PythonCall.jl/stable/juliacall/), and `uv`.
+
+## Tools
+
+| Tool | Description |
+|------|-------------|
+| `run_bayesian_analysis` | Load a CSV file and train the Bayesian regression model |
+| `describe_data` | Inspect the loaded dataset -- columns, stats, and what the model recognizes |
+| `estimate_house_price` | Predict price for a house (any features can be omitted) |
+
+The CSV should have a `price` column and any of: `bedrooms`, `bathrooms`, `living_area`, `floors`, `basement_area`, `yr_built`, `label`.
 
 ## Installation
 
@@ -13,38 +20,34 @@ interaction is done with [JuliaCall](https://juliapy.github.io/PythonCall.jl/sta
 uv sync
 ```
 
+Julia dependencies are managed automatically by `juliapkg`. If you hit issues, see the [juliapkg docs](https://github.com/JuliaPy/pyjuliapkg).
+
 ## Usage
 
+Start the server in the background before connecting any MCP client:
+
 ```bash
-uv run python main.py
-```
-
-or 
-
-```
 uv run fastmcp run main.py:mcp --transport sse --port 8001
 ```
 
-### Julia dependencies
+The first startup is slow (~30s) because Julia compiles packages and generates a test CSV. Subsequent runs use the compiled cache and start much faster. Wait until you see the server listening message before proceeding.
 
-The `juliacall` package uses `juliapkg` to manage Julia dependencies automatically.
-In theory, you should be doing anything and all required dependencies should be 
-installed automatically. In case of some Julia dependency problems refer to the 
-documentation of `juliapkg` to see how to install all the required dependencies 
-manually.
+## Pluto Notebook
 
-## MCP Client Config
+The Bayesian model is developed in `example.jl`, a [Pluto.jl](https://plutojl.org/) reactive notebook. To explore or modify the model interactively, install Pluto following the [instructions on the website](https://plutojl.org/), then open the notebook:
 
-Refer to your MCP client documentation to check how to add MCP servers there.
-Typically it would imply some kind of `settings.json` and adding something like:
-```json
-{
-  "mcpServers": {
-    "rxinfer": {
-      "command": "python",
-      "args": ["main.py"]
-    }
-  }
-}
+```julia
+using Pluto; Pluto.run()
 ```
 
+This opens a browser-based environment where you can open `example.jl`, tweak the model, and see results update in real time.
+
+## Claude Code
+
+A `.mcp.json` is included that connects to the server on `localhost:8001`. Start the server first in a separate terminal:
+
+```bash
+uv run fastmcp run main.py:mcp --transport sse --port 8001
+```
+
+Then launch Claude Code in the project directory. The server will be detected automatically — approve it when prompted.
