@@ -124,6 +124,7 @@ begin
 	nr_houses_to_generate = 20_000
 	rng = StableRNG(42)
 	houses = map(_ -> price_house(rng, random_house(rng)), 1:nr_houses_to_generate)
+	houses = filter(h -> h.price > 100_000, houses)
 end
 
 # ╔═╡ cd79dc9e-5ca3-4916-bbd9-e41262b1f572

@@ -18,6 +18,7 @@ let
     @info "Generating test CSV with 20,000 entries..."
     test_rng = StableRNG(123)
     test_houses = map(_ -> price_house(test_rng, random_house(test_rng)), 1:20_000)
+    test_houses = filter(h -> h.price > 100_000, test_houses)
     df = DataFrame(
         bedrooms      = map(h -> h.house.bedrooms, test_houses),
         bathrooms     = map(h -> h.house.bathrooms, test_houses),
