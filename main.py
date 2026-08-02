@@ -1,4 +1,5 @@
 import json
+import os
 
 from fastmcp import FastMCP
 from juliacall import Main as jl
@@ -8,6 +9,22 @@ from typing import Optional
 mcp = FastMCP("RxInfer")
 
 jl.include("rxinfer.jl")
+
+
+def _resolve_data_path(file_path: str) -> str:
+    """Resolve and validate a CSV path, restricting reads to a trusted data directory.
+
+    The data directory defaults to the current working directory and can be overridden
+    with the RXINFER_DATA_DIR environment variable. Absolute paths outside that directory
+    and any ../ traversal are rejected.
+    """
+    data_dir = os.path.realpath(os.environ.get("RXINFER_DATA_DIR", os.getcwd()))
+    p = os.path.realpath(file_path)
+    if p != data_dir and not p.startswith(data_dir + os.sep):
+        raise ValueError(f"file_path must be inside the trusted data directory: {data_dir}")
+    if not os.path.isfile(p):
+        raise FileNotFoundError(f"No such file: {file_path}")
+    return p
 
 
 class AnalysisResult(BaseModel):
@@ -65,7 +82,11 @@ async def run_bayesian_analysis(file_path: str, iterations: int = 10) -> Analysi
     bedrooms, bathrooms, living_area, floors, basement_area, yr_built, label.
     After training, the model can estimate prices for new houses via estimate_house_price.
     """
-    result = jl.run_analysis(file_path, iterations=iterations)
+    try:
+        resolved = _resolve_data_path(file_path)
+    except (ValueError, FileNotFoundError, OSError) as e:
+        return AnalysisResult(status="error", message=f"Invalid file path: {e}")
+    result = jl.run_analysis(resolved, iterations=iterations)
     return AnalysisResult(**{k: result.get(k) for k in AnalysisResult.model_fields})
 
 
