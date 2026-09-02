@@ -92,18 +92,36 @@ async def estimate_house_price(
     label: Optional[float] = None,
 ) -> PriceEstimate:
     """
-    Estimate the price of a house given its features. Not all features need to be specified -
-    missing features will be imputed from the training data mean, and the model will report
-    higher uncertainty for those. Must call run_bayesian_analysis first.
+    Estimate the price of a house given its features. Must call run_bayesian_analysis first.
+    Every feature is optional, so choose which to pass based on your use case:
 
-    Parameters:
-    - bedrooms: Number of bedrooms
-    - bathrooms: Number of bathrooms
-    - living_area: Living area in square meters
-    - floors: Number of floors
-    - basement_area: Basement size in square meters
-    - yr_built: Year the house was built
-    - label: Quality label from 1.0 to 5.0
+    1) Pricing a real house with incomplete information. Provide only the features you
+       actually know and OMIT any feature whose value is unknown (leave it unset / null) -
+       do NOT fill an unknown feature with a single guessed value as if it were known. The
+       Bayesian model imputes each omitted feature from the training-data mean and reports
+       higher uncertainty (a larger price_std) for it, which is the correct, honest result.
+       Substituting a fabricated value instead produces a falsely confident, misleading
+       estimate. Example: if you don't know when the house was built, omit yr_built rather
+       than picking some plausible year.
+
+    2) Exploring or comparing scenarios (what-if analysis). It is perfectly fine - and
+       intended - to call this tool multiple times with different explicit values for a
+       feature to see how the estimate changes: e.g. sweeping yr_built across a range to plot
+       price vs. year, or comparing a 2-bedroom vs. a 4-bedroom version of the same house.
+       Here the varied values are deliberate inputs you are testing, not guesses standing in
+       for missing knowledge.
+
+    Rule of thumb: omit a feature when its value is genuinely unknown; supply a value only
+    when you know it, or when you are deliberately testing that specific value.
+
+    Parameters (all optional):
+    - bedrooms: Number of bedrooms - omit if unknown
+    - bathrooms: Number of bathrooms - omit if unknown
+    - living_area: Living area in square meters - omit if unknown
+    - floors: Number of floors - omit if unknown
+    - basement_area: Basement size in square meters - omit if unknown
+    - yr_built: Year the house was built - omit if unknown
+    - label: Quality label from 1.0 to 5.0 - omit if unknown
     """
     house_dict = {}
     if bedrooms is not None:
