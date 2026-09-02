@@ -32,6 +32,22 @@ uv run fastmcp run main.py:mcp --transport sse --port 8001
 
 The first startup is slow (~30s) because Julia compiles packages and generates a test CSV. Subsequent runs use the compiled cache and start much faster. Wait until you see the server listening message before proceeding.
 
+## Test dataset
+
+Starting the server writes a synthetic dataset to `test_houses.csv` in the project root (~20,000 houses). This is the dataset used in the demo/presentation — there's no need to keep it around, since it's regenerated on demand.
+
+- **Deterministic**: it's generated with a fixed seed (`StableRNG(123)`), so every regeneration produces the exact same dataset. Reproducible demos.
+- **Gitignored on purpose**: to get it back, just (re)start the server. Delete the file first if you want a guaranteed-fresh copy.
+- **Columns**: `bedrooms`, `bathrooms`, `living_area`, `floors`, `basement_area`, `yr_built`, `label`, `price`.
+
+To use it in the demo, point `run_bayesian_analysis` at `test_houses.csv`, or drag-and-drop the file into Claude Desktop.
+
+The generation logic lives in `rxinfer.jl` and reuses the `random_house` / `price_house` functions from `example.jl`. To skip it on startup (faster boot when you already have a dataset), set `SKIP_TEST_CSV=true`:
+
+```bash
+SKIP_TEST_CSV=true uv run fastmcp run main.py:mcp --transport sse --port 8001
+```
+
 ## Pluto Notebook
 
 The Bayesian model is developed in `example.jl`, a [Pluto.jl](https://plutojl.org/) reactive notebook. To explore or modify the model interactively, install Pluto following the [instructions on the website](https://plutojl.org/), then open the notebook:
@@ -74,7 +90,7 @@ Then launch Claude Code in the project directory. The server will be detected au
 
 ## Example conversation
 
-Ask Claude to run Bayesian analysis on the test dataset (created automatically when starting the server)
+Ask Claude to run Bayesian analysis on the test dataset (`test_houses.csv`, created automatically when starting the server — see [Test dataset](#test-dataset))
 
 <img width="883" height="1026" alt="Screenshot 2026-03-26 at 11 20 36" src="https://github.com/user-attachments/assets/c9fe90f9-f221-48ec-a964-f73b63225c6e" />
 
