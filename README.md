@@ -20,7 +20,7 @@ The CSV should have a `price` column and any of: `bedrooms`, `bathrooms`, `livin
 uv sync
 ```
 
-Julia dependencies are managed automatically by `juliapkg`. If you hit issues, see the [juliapkg docs](https://github.com/JuliaPy/pyjuliapkg).
+Julia itself and all Julia dependencies are managed automatically by `juliapkg`: they are pinned in `juliapkg.json` and installed into an isolated Julia environment under `.venv/julia_env` (independent of any global Julia setup). The **first** server start downloads and precompiles the full stack (RxInfer, Plots, …), which can take several minutes; subsequent starts use the compiled cache. If you hit issues, see the [juliapkg docs](https://github.com/JuliaPy/pyjuliapkg).
 
 ## Usage
 
