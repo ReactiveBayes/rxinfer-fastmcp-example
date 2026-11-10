@@ -33,12 +33,24 @@ end
 """
     create_feature_functions(x_dim)
 
-Combine linear and quadratic basis functions into a single feature map.
-For `x_dim` input features, this produces `2 * x_dim` basis functions:
-`[x₁, …, x_d, x₁², …, x_d²]`.
+Combine linear and quadratic basis functions plus a constant (intercept) into a single
+feature map. For `x_dim` input features, this produces `2 * x_dim + 1` basis functions:
+`[x₁, …, x_d, x₁², …, x_d², 1]`.
+
+The intercept matters: a sweet spot like `-(x - 15)²` expands to `-x² + 30x - 225`,
+and that constant `-225` can only be expressed by an intercept term.
 """
 function create_feature_functions(x_dim)
-    return vcat(linear_functions(x_dim), quadratic_functions(x_dim))
+    return vcat(linear_functions(x_dim), quadratic_functions(x_dim), [(x) -> 1.0])
+end
+
+"""
+    feature_function_names(features)
+
+Human-readable names of the basis functions, in the same order as `create_feature_functions`.
+"""
+function feature_function_names(features::AbstractVector{<:AbstractString})
+    return vcat(collect(features), [f * "^2" for f in features], ["intercept"])
 end
 
 # --- The probabilistic model -------------------------------------------------
@@ -122,7 +134,8 @@ end
     initial_state(arguments, phi_dim)
 
 Create a blank `InferenceState` with vague priors: zero-mean weights with very large variance
-(we know nothing yet) and a near-flat Gamma prior on noise precision.
+(we know nothing yet) and a near-flat Gamma prior on noise precision (shape 0.01, rate 0.01,
+i.e. scale 100).
 """
 function initial_state(arguments::InferenceArguments, phi_dim::Int)::InferenceState
     return InferenceState(
@@ -131,7 +144,7 @@ function initial_state(arguments::InferenceArguments, phi_dim::Int)::InferenceSt
             omega_mean       = zeros(phi_dim),
             omega_covariance = 1e8 * Diagonal(ones(phi_dim)),
             noise_shape      = 1e-2,
-            noise_scale      = 1e-2
+            noise_scale      = 1e2
         ),
         x_train = nothing,
         y_train = nothing
@@ -204,41 +217,27 @@ end
 # --- Prediction ------------------------------------------------------------------
 
 """
-    estimate(state, x)
+    predict_known(state, x)
 
-Predict the target for a feature vector `x` given the learned `state`. Any `missing`
-entries are imputed with the training set mean and the corresponding weight uncertainty
-is inflated by 100x — the model becomes less confident rather than silently wrong.
-
-Returns a named tuple `(mean, std)` of the predictive distribution.
+Run the RxInfer predictive model for a fully specified feature vector `x`.
+Returns the predictive `(mean, var)`.
 """
-function estimate(state::InferenceState, x::AbstractVector)
-    x = Vector{Union{Float64, Missing}}(x)
+function predict_known(state::InferenceState, x::AbstractVector{<:Real})
     phi_s = create_feature_functions(length(x))
 
-    # Copy, since we modify the prior below if the input contains missing values
     omega_distribution = MvNormalMeanCovariance(
-        copy(state.parameters.omega_mean),
-        copy(state.parameters.omega_covariance)
+        state.parameters.omega_mean,
+        state.parameters.omega_covariance
     )
     noise_distribution = GammaShapeScale(
-        copy(state.parameters.noise_shape),
-        copy(state.parameters.noise_scale)
+        state.parameters.noise_shape,
+        state.parameters.noise_scale
     )
 
     priors = Dict(
         :ω => omega_distribution,
         :s => noise_distribution
     )
-
-    for i in eachindex(x)
-        # If a component is missing, replace it with the dataset average
-        # and increase the uncertainty of the corresponding weight
-        if x[i] === missing
-            x[i] = mean(getindex.(state.x_train, i))
-            omega_distribution.Σ[i, i] *= 100
-        end
-    end
 
     init = @initialization begin
         μ(ω) = omega_distribution
@@ -257,5 +256,51 @@ function estimate(state::InferenceState, x::AbstractVector)
         constraints    = feature_regressions_predictive_constraints()
     )
 
-    return (mean = mean(result.posteriors[:μ]), std = std(result.predictions[:y]))
+    return (mean = mean(result.posteriors[:μ]), var = var(result.predictions[:y]))
+end
+
+"""
+    estimate(state, x)
+
+Predict the target for a feature vector `x` given the learned `state`. Entries of `x`
+may be `missing` — for example, tomorrow's wind speed when you don't know it yet.
+
+Unknown features are handled with the *law of total variance*. We don't know the
+value of a missing feature, but the training data tells us which values are plausible.
+So we average the prediction over the values seen in training:
+
+    mean = E_x[ μ(x) ]
+    var  = E_x[ σ²(x) ] + Var_x[ μ(x) ]
+           ╰─ model ─╯   ╰─ because x is unknown ─╯
+
+where `μ(x) = ϕ(x)ᵀ E[ω]` and `σ²(x)` is the predictive variance from RxInfer. To keep
+it cheap, `σ²(x)` is evaluated once, at the training mean of the missing features
+(it barely changes with `x` once the weights are well determined).
+
+The result: unknown features that matter a lot (large weight, wide spread in the data)
+widen the prediction a lot; unknown features that don't matter barely change it.
+
+Returns a named tuple `(mean, std)` of the predictive distribution.
+"""
+function estimate(state::InferenceState, x::AbstractVector)
+    missing_idx = findall(ismissing, x)
+
+    # Fill missing features with their training mean and ask RxInfer for the
+    # predictive distribution at that point.
+    x̄ = Float64[ismissing(x[i]) ? mean(getindex.(state.x_train, i)) : x[i] for i in eachindex(x)]
+    known = predict_known(state, x̄)
+
+    isempty(missing_idx) && return (mean = known.mean, std = sqrt(known.var))
+
+    # Spread of the mean prediction when the missing features take the values
+    # seen in the training data (the rest of the input stays fixed).
+    phi_s = create_feature_functions(length(x))
+    m = state.parameters.omega_mean
+    μs = map(state.x_train) do row
+        xk = copy(x̄)
+        xk[missing_idx] .= row[missing_idx]
+        dot([ϕ(xk) for ϕ in phi_s], m)
+    end
+
+    return (mean = mean(μs), std = sqrt(known.var + var(μs)))
 end

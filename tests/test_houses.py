@@ -117,6 +117,18 @@ async def test_less_information_means_more_uncertainty(trained_houses, client):
     assert full["price_std"] < partial["price_std"] < empty["price_std"]
 
 
+async def test_knowing_nothing_predicts_the_population(trained_houses, client, houses_csv):
+    # With every feature unknown, the law of total variance averages over all
+    # training houses: the estimate is the average price, the spread their spread.
+    with houses_csv.open() as f:
+        prices = [float(r["price"]) for r in csv.DictReader(f)]
+    avg = sum(prices) / len(prices)
+    sd = (sum((p - avg) ** 2 for p in prices) / (len(prices) - 1)) ** 0.5
+    out = await estimate(client, EMPTY_HOUSE)
+    assert out["estimated_price"] == pytest.approx(avg, rel=0.01)
+    assert out["price_std"] == pytest.approx(sd, rel=0.05)
+
+
 async def test_in_sample_accuracy(trained_houses, client, houses_csv, golden_houses):
     with houses_csv.open() as f:
         rows = [r for _, r in zip(range(100), csv.DictReader(f))]
