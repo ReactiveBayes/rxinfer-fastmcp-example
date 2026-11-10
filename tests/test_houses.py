@@ -68,7 +68,8 @@ async def test_run_bayesian_analysis_tool(isolated_state, client, houses_csv, go
         await client.call_tool("run_bayesian_analysis", {"file_path": str(houses_csv), "iterations": 2})
     ).structured_content
     assert out["status"] == "success"
-    golden_houses.check("csv_rows", out["num_houses_trained"])
+    assert out["dataset"] == "houses"
+    golden_houses.check("csv_rows", out["num_rows_trained"])
 
 
 @pytest.mark.parametrize("defect", ["missing_column", "empty_cell"])

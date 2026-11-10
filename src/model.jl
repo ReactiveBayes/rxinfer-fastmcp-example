@@ -44,15 +44,6 @@ function create_feature_functions(x_dim)
     return vcat(linear_functions(x_dim), quadratic_functions(x_dim), [(x) -> 1.0])
 end
 
-"""
-    feature_function_names(features)
-
-Human-readable names of the basis functions, in the same order as `create_feature_functions`.
-"""
-function feature_function_names(features::AbstractVector{<:AbstractString})
-    return vcat(collect(features), [f * "^2" for f in features], ["intercept"])
-end
-
 # --- The probabilistic model -------------------------------------------------
 #
 # 1. Training model: observes all the data and learns the weight vector `ω`
