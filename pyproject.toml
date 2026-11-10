@@ -13,3 +13,18 @@ dependencies = [
     "juliapkg>=0.1.23",
     "pydantic>=2.12.5",
 ]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.2.0",
+    "pytest-asyncio>=1.4.1.post1",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+pythonpath = ["."]
+# Julia uses SIGSEGV internally (GC safepoints); pytest's faulthandler would
+# intercept it and abort the process, so it must be disabled with juliacall.
+addopts = "-p no:faulthandler"
