@@ -1,0 +1,11 @@
+{
+  "csv_rows": 18927,
+  "csv_sha256": "06aa105f356287e0cdc3f05c134b5eacc55ca56dec59a26dd2d6864413a978b8",
+  "empty_price": 452798.91,
+  "empty_std": 204164.69,
+  "full_price": 469185.99,
+  "full_std": 47292.59,
+  "mae_100": 29265.09438899816,
+  "partial_price": 418227.3,
+  "partial_std": 60320.66
+}

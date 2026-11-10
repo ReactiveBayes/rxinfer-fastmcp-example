@@ -10,3 +10,8 @@ wheels/
 .venv
 
 test_houses.csv
+
+# Generated datasets (recreate with generate_dataset.py)
+bike_commutes.csv
+
+.pytest_cache/

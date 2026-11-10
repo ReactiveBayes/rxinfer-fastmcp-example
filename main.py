@@ -1,19 +1,30 @@
 import json
+from pathlib import Path
+from typing import Literal, Optional
 
 from fastmcp import FastMCP
 from juliacall import Main as jl
 from pydantic import BaseModel, Field
-from typing import Optional
 
 mcp = FastMCP("RxInfer")
 
-jl.include("rxinfer.jl")
+jl.include(str(Path(__file__).resolve().parent / "src" / "server.jl"))
+
+Dataset = Literal["houses", "bike"]
+
+
+def call_julia(fn, *args, **kwargs) -> dict:
+    """Call a Julia function returning a Dict and convert the result to plain Python."""
+    return json.loads(jl.JSON.json(fn(*args, **kwargs)))
 
 
 class AnalysisResult(BaseModel):
     status: str = Field(description="Status of the analysis ('success' or 'error')")
-    num_houses_trained: Optional[int] = Field(
-        default=None, description="Number of houses used for training"
+    dataset: Optional[str] = Field(
+        default=None, description="Which dataset was recognized and trained ('houses' or 'bike')"
+    )
+    num_rows_trained: Optional[int] = Field(
+        default=None, description="Number of rows used for training"
     )
     num_features: Optional[int] = Field(
         default=None, description="Number of features used"
@@ -43,8 +54,29 @@ class PriceEstimate(BaseModel):
     )
 
 
+class CommuteEstimate(BaseModel):
+    status: str = Field(description="Status of the prediction ('success' or 'error')")
+    estimated_minutes: Optional[float] = Field(
+        default=None, description="Estimated door-to-door commute time in minutes"
+    )
+    minutes_std: Optional[float] = Field(
+        default=None,
+        description="Standard deviation of the estimate in minutes (uncertainty)",
+    )
+    specified_features: Optional[list[str]] = Field(
+        default=None, description="Features that were provided"
+    )
+    missing_features: Optional[list[str]] = Field(
+        default=None, description="Features that were unknown and averaged over"
+    )
+    message: Optional[str] = Field(
+        default=None, description="Error message if status is 'error'"
+    )
+
+
 class DataDescription(BaseModel):
     status: str = Field(description="Status ('success' or 'error')")
+    dataset: Optional[str] = Field(default=None, description="Which dataset is described")
     num_rows: Optional[int] = Field(
         default=None, description="Number of rows in the dataset"
     )
@@ -57,28 +89,77 @@ class DataDescription(BaseModel):
     )
 
 
+class ModelTerm(BaseModel):
+    term: str = Field(description="Basis term: a feature (x), its square (x^2), or 'intercept'")
+    mean: float = Field(description="Posterior mean of the term's weight")
+    std: float = Field(description="Posterior standard deviation of the weight (uncertainty)")
+
+
+class ModelDescription(BaseModel):
+    status: str = Field(description="Status ('success' or 'error')")
+    dataset: Optional[str] = Field(default=None, description="Which dataset's model is described")
+    target: Optional[str] = Field(default=None, description="The predicted column")
+    terms: Optional[list[ModelTerm]] = Field(
+        default=None,
+        description="Learned weights: target ≈ sum of weight × term (+ intercept)",
+    )
+    noise_std: Optional[float] = Field(
+        default=None, description="Learned standard deviation of the observation noise"
+    )
+    message: Optional[str] = Field(
+        default=None, description="Error message if status is 'error'"
+    )
+
+
 @mcp.tool(timeout=120)
 async def run_bayesian_analysis(file_path: str, iterations: int = 10) -> AnalysisResult:
     """
-    Load a CSV file containing housing data and run Bayesian regression analysis.
-    The CSV must have a 'price' column and can have any of these feature columns:
-    bedrooms, bathrooms, living_area, floors, basement_area, yr_built, label.
-    After training, the model can estimate prices for new houses via estimate_house_price.
+    Load a CSV file and train a Bayesian regression model on it. The dataset is
+    recognized from its target column:
+
+    - 'price' -> house prices. Feature columns: bedrooms, bathrooms, living_area,
+      floors, basement_area, yr_built, label. Then use estimate_house_price.
+    - 'commute_minutes' -> bike commute times in Eindhoven. Feature columns:
+      distance_km, wind_speed_ms, rain_mm_per_hour, traffic_lights, temperature_c,
+      congestion, bike_age_years. Then use estimate_bike_commute_time.
+
+    All feature columns must be present and complete. Each dataset keeps its own
+    trained model, so you can train both and switch between them.
     """
-    result = jl.run_analysis(file_path, iterations=iterations)
+    result = call_julia(jl.run_analysis, file_path, iterations=iterations)
     return AnalysisResult(**{k: result.get(k) for k in AnalysisResult.model_fields})
 
 
 @mcp.tool(timeout=30)
-async def describe_data() -> DataDescription:
+async def describe_data(dataset: Optional[Dataset] = None) -> DataDescription:
     """
-    Describe the structure of the currently loaded dataset. Shows column names,
-    types, statistics (min/max/mean), and which columns the Bayesian model uses.
+    Describe the structure of a loaded dataset. Shows column names, types,
+    statistics (min/max/mean), and which columns the Bayesian model uses.
+    `dataset` is 'houses' or 'bike'; defaults to the most recently trained one.
     Must call run_bayesian_analysis first to load data.
     """
-    result = jl.get_data_description()
-    result = json.loads(jl.JSON.json(result))
+    result = call_julia(jl.get_data_description, dataset)
     return DataDescription(**{k: result.get(k) for k in DataDescription.model_fields})
+
+
+@mcp.tool(timeout=30)
+async def describe_model(dataset: Optional[Dataset] = None) -> ModelDescription:
+    """
+    Show what the Bayesian model learned: the formula it found in the data.
+    The model predicts
+
+        target ≈ w1·x1 + ... + wd·xd + v1·x1² + ... + vd·xd² + intercept
+
+    and this returns the posterior mean ± standard deviation of every weight, plus the
+    learned noise level (how much is left unexplained). A weight whose mean is within a
+    couple of standard deviations of 0 means the feature (or its square) has no clear
+    effect. Use this to explain which features matter and how, e.g. that a squared term
+    with a positive weight means the effect grows faster and faster.
+    `dataset` is 'houses' or 'bike'; defaults to the most recently trained one.
+    Must call run_bayesian_analysis first.
+    """
+    result = call_julia(jl.get_model_description, dataset)
+    return ModelDescription(**{k: result.get(k) for k in ModelDescription.model_fields})
 
 
 @mcp.tool(timeout=60)
@@ -139,9 +220,71 @@ async def estimate_house_price(
     if label is not None:
         house_dict["label"] = label
 
-    result = jl.predict_price(house_dict)
-    result = json.loads(jl.JSON.json(result))
+    result = call_julia(jl.predict, "houses", house_dict)
+    result["estimated_price"] = result.get("estimate")
+    result["price_std"] = result.get("std")
     return PriceEstimate(**{k: result.get(k) for k in PriceEstimate.model_fields})
+
+
+@mcp.tool(timeout=60)
+async def estimate_bike_commute_time(
+    distance_km: Optional[float] = None,
+    wind_speed_ms: Optional[float] = None,
+    rain_mm_per_hour: Optional[float] = None,
+    traffic_lights: Optional[float] = None,
+    temperature_c: Optional[float] = None,
+    congestion: Optional[float] = None,
+    bike_age_years: Optional[float] = None,
+) -> CommuteEstimate:
+    """
+    Estimate how long a bike commute in Eindhoven takes, in minutes, with uncertainty.
+    Must call run_bayesian_analysis on the bike commute dataset first.
+    Every input is optional, so choose which to pass based on your use case:
+
+    1) Estimating a real ride with incomplete information. Provide only what you
+       actually know and OMIT anything whose value is unknown (leave it unset / null) -
+       do NOT fill an unknown input with a single guessed value as if it were known.
+       The Bayesian model averages over the values it has seen for every omitted input
+       and reports a larger minutes_std when that input matters, which is the correct,
+       honest result. Example: if you don't know tomorrow's wind, omit wind_speed_ms
+       rather than picking some plausible value.
+
+    2) Exploring or comparing scenarios (what-if analysis). It is perfectly fine - and
+       intended - to call this tool multiple times with different explicit values, e.g.
+       comparing a dry and a rainy ride, or sweeping wind_speed_ms from 0 to 12 to see
+       how much headwind costs. Here the varied values are deliberate inputs you are
+       testing, not guesses standing in for missing knowledge.
+
+    When the user describes conditions in words, translating them is fine: "perfect
+    weather" means no rain and little wind, "the path is clear" means congestion 0.
+
+    Parameters (all optional):
+    - distance_km: Length of the ride in km (e.g. 0.5-15) - omit if unknown
+    - wind_speed_ms: Wind speed in m/s (0 calm, ~3 light breeze, ~5 moderate, ~8 strong,
+      12 very strong) - omit if unknown
+    - rain_mm_per_hour: Rain intensity in mm/hour (0 dry, ~1 light rain, ~4 moderate,
+      8+ heavy) - omit if unknown
+    - traffic_lights: Number of traffic lights on the route (e.g. 0-15) - omit if unknown
+    - temperature_c: Air temperature in degrees Celsius (e.g. -5 to 30) - omit if unknown
+    - congestion: How busy the bike path is, 0 (empty) to 10 (rush-hour bike jam) -
+      omit if unknown
+    - bike_age_years: Age of the bike in years (e.g. 0-20) - omit if unknown
+    """
+    inputs = {
+        "distance_km": distance_km,
+        "wind_speed_ms": wind_speed_ms,
+        "rain_mm_per_hour": rain_mm_per_hour,
+        "traffic_lights": traffic_lights,
+        "temperature_c": temperature_c,
+        "congestion": congestion,
+        "bike_age_years": bike_age_years,
+    }
+    inputs = {k: v for k, v in inputs.items() if v is not None}
+
+    result = call_julia(jl.predict, "bike", inputs)
+    result["estimated_minutes"] = result.get("estimate")
+    result["minutes_std"] = result.get("std")
+    return CommuteEstimate(**{k: result.get(k) for k in CommuteEstimate.model_fields})
 
 
 if __name__ == "__main__":
