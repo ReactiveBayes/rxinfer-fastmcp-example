@@ -85,10 +85,10 @@ def golden_tools() -> Golden:
 
 
 @pytest.fixture(scope="session")
-def houses_csv() -> Path:
-    """The house dataset used in the original demo (generated at server start)."""
-    path = PROJECT_ROOT / "test_houses.csv"
-    assert path.exists(), "test_houses.csv should be generated when the server starts"
+def houses_csv(tmp_path_factory) -> Path:
+    """The house dataset used in the original demo, with its default seed and size."""
+    path = tmp_path_factory.mktemp("data") / "test_houses.csv"
+    jl.write_dataset("houses", str(path))
     return path
 
 
@@ -107,17 +107,17 @@ async def client():
 
 
 def _save_state():
-    return (
-        jl.seval("global_inference_state"),
-        jl.seval("global_dataframe"),
-    )
+    return jl.seval("() -> (copy(STATES), copy(DATAFRAMES), LAST_DATASET[])")()
 
 
 def _restore_state(saved):
-    state, df = saved
-    jl.seval("(s, d) -> begin global global_inference_state = s; global global_dataframe = d; nothing end")(
-        state, df
-    )
+    jl.seval(
+        """(saved) -> begin
+            reset_state!()
+            merge!(STATES, saved[1]); merge!(DATAFRAMES, saved[2]); LAST_DATASET[] = saved[3]
+            nothing
+        end"""
+    )(saved)
 
 
 @pytest.fixture
@@ -131,4 +131,4 @@ def isolated_state():
 @pytest.fixture
 def untrained(isolated_state):
     """Pretend no model has been trained yet (restored after the test)."""
-    _restore_state((None, None))
+    jl.seval("reset_state!")()

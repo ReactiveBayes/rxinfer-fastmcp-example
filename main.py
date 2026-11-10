@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 from fastmcp import FastMCP
 from juliacall import Main as jl
@@ -7,7 +8,7 @@ from typing import Optional
 
 mcp = FastMCP("RxInfer")
 
-jl.include("rxinfer.jl")
+jl.include(str(Path(__file__).resolve().parent / "src" / "server.jl"))
 
 
 class AnalysisResult(BaseModel):
@@ -65,7 +66,8 @@ async def run_bayesian_analysis(file_path: str, iterations: int = 10) -> Analysi
     bedrooms, bathrooms, living_area, floors, basement_area, yr_built, label.
     After training, the model can estimate prices for new houses via estimate_house_price.
     """
-    result = jl.run_analysis(file_path, iterations=iterations)
+    result = json.loads(jl.JSON.json(jl.run_analysis(file_path, iterations=iterations)))
+    result["num_houses_trained"] = result.get("num_rows_trained")
     return AnalysisResult(**{k: result.get(k) for k in AnalysisResult.model_fields})
 
 
@@ -139,8 +141,9 @@ async def estimate_house_price(
     if label is not None:
         house_dict["label"] = label
 
-    result = jl.predict_price(house_dict)
-    result = json.loads(jl.JSON.json(result))
+    result = json.loads(jl.JSON.json(jl.predict("houses", house_dict)))
+    result["estimated_price"] = result.get("estimate")
+    result["price_std"] = result.get("std")
     return PriceEstimate(**{k: result.get(k) for k in PriceEstimate.model_fields})
 
 
