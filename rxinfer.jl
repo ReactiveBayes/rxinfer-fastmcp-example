@@ -56,7 +56,20 @@ const HOUSE_FIELD_DESCRIPTIONS = Dict(
 function run_analysis(file_path::String; iterations::Int=10)
     try
         @info "Starting Bayesian analysis on $file_path"
-        global global_dataframe = CSV.read(file_path, DataFrame)
+        df = CSV.read(file_path, DataFrame)
+
+        # The model needs complete training data. Missing values would make
+        # inference blow the stack, which crashes the whole process under juliacall.
+        for col in vcat(string.(HOUSE_FIELDS), "price")
+            if !(col in names(df))
+                return Dict("status" => "error", "message" => "Column '$col' is missing from the CSV. Required columns: $(join(string.(HOUSE_FIELDS), ", ")), price.")
+            end
+            if any(ismissing, df[!, col])
+                return Dict("status" => "error", "message" => "Column '$col' has empty cells. The model needs complete training data.")
+            end
+        end
+
+        global global_dataframe = df
 
         priced_houses = PricedHouse[]
         for row in eachrow(global_dataframe)

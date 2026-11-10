@@ -71,23 +71,27 @@ async def test_run_bayesian_analysis_tool(isolated_state, client, houses_csv, go
     golden_houses.check("csv_rows", out["num_houses_trained"])
 
 
-async def test_training_csv_with_missing_column_reports_error(isolated_state, client, houses_csv, tmp_path):
-    # Known limitation: the model cannot train when a feature column is absent.
-    # It must fail gracefully (status=error) instead of crashing the server.
-    path = tmp_path / "no_bedrooms.csv"
+@pytest.mark.parametrize("defect", ["missing_column", "empty_cell"])
+async def test_incomplete_training_csv_reports_error(isolated_state, client, houses_csv, tmp_path, defect):
+    # Known limitation: the model needs complete training data. It must fail
+    # gracefully (status=error) instead of crashing the server.
+    path = tmp_path / f"{defect}.csv"
     with houses_csv.open() as src, path.open("w", newline="") as dst:
         reader = csv.DictReader(src)
-        fields = [f for f in reader.fieldnames if f != "bedrooms"]
+        fields = [f for f in reader.fieldnames if not (defect == "missing_column" and f == "bedrooms")]
         writer = csv.DictWriter(dst, fieldnames=fields)
         writer.writeheader()
         for i, row in enumerate(reader):
             if i >= 500:
                 break
+            if defect == "empty_cell" and i == 10:
+                row["bedrooms"] = ""
             writer.writerow({k: row[k] for k in fields})
     out = (
         await client.call_tool("run_bayesian_analysis", {"file_path": str(path), "iterations": 2})
     ).structured_content
     assert out["status"] == "error"
+    assert "bedrooms" in out["message"]
 
 
 # --- Predictions ----------------------------------------------------------------
