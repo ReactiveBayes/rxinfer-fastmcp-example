@@ -1,6 +1,7 @@
 {
   "_names": [
     "describe_data",
+    "describe_model",
     "estimate_bike_commute_time",
     "estimate_house_price",
     "run_bayesian_analysis"
@@ -96,6 +97,123 @@
         "status": {
           "description": "Status ('success' or 'error')",
           "type": "string"
+        }
+      },
+      "required": [
+        "status"
+      ],
+      "type": "object"
+    }
+  },
+  "describe_model": {
+    "input": {
+      "additionalProperties": false,
+      "properties": {
+        "dataset": {
+          "anyOf": [
+            {
+              "enum": [
+                "houses",
+                "bike"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "type": "object"
+    },
+    "output": {
+      "properties": {
+        "dataset": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Which dataset's model is described"
+        },
+        "message": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Error message if status is 'error'"
+        },
+        "noise_std": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Learned standard deviation of the observation noise"
+        },
+        "status": {
+          "description": "Status ('success' or 'error')",
+          "type": "string"
+        },
+        "target": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The predicted column"
+        },
+        "terms": {
+          "anyOf": [
+            {
+              "items": {
+                "properties": {
+                  "mean": {
+                    "description": "Posterior mean of the term's weight",
+                    "type": "number"
+                  },
+                  "std": {
+                    "description": "Posterior standard deviation of the weight (uncertainty)",
+                    "type": "number"
+                  },
+                  "term": {
+                    "description": "Basis term: a feature (x), its square (x^2), or 'intercept'",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "term",
+                  "mean",
+                  "std"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Learned weights: target \u2248 sum of weight \u00d7 term (+ intercept)"
         }
       },
       "required": [

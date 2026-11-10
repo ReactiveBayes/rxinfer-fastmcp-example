@@ -172,3 +172,43 @@ function get_data_description(dataset = nothing)
         return Dict("status" => "error", "message" => "Description failed: $(e)")
     end
 end
+
+"""
+    get_model_description(dataset = nothing)
+
+What the model learned: posterior mean and standard deviation of every term in
+
+    target ≈ Σ w·x + Σ w·x² + intercept
+
+plus the learned observation noise. Compare with the hidden formula
+(`generate_dataset.py <dataset> --show-formula`).
+"""
+function get_model_description(dataset = nothing)
+    try
+        dataset = something(dataset, LAST_DATASET[], Some(nothing))
+        if dataset === nothing || !haskey(STATES, dataset)
+            return Dict("status" => "error", "message" => "No model trained yet. Run analysis first.")
+        end
+
+        spec = DATASETS[dataset]
+        p = STATES[dataset].parameters
+        names = feature_function_names(spec.features)
+        sds = sqrt.(diag(p.omega_covariance))
+        terms = [
+            Dict("term" => n, "mean" => round(m, sigdigits = 6), "std" => round(s, sigdigits = 3))
+            for (n, m, s) in zip(names, p.omega_mean, sds)
+        ]
+        noise_std = 1 / sqrt(p.noise_shape * p.noise_scale)
+
+        return Dict(
+            "status" => "success",
+            "dataset" => dataset,
+            "target" => spec.target,
+            "terms" => terms,
+            "noise_std" => round(noise_std, sigdigits = 6),
+        )
+    catch e
+        @error "Exception in model description" error = (e, catch_backtrace())
+        return Dict("status" => "error", "message" => "Model description failed: $(e)")
+    end
+end

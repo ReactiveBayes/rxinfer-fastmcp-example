@@ -89,6 +89,28 @@ class DataDescription(BaseModel):
     )
 
 
+class ModelTerm(BaseModel):
+    term: str = Field(description="Basis term: a feature (x), its square (x^2), or 'intercept'")
+    mean: float = Field(description="Posterior mean of the term's weight")
+    std: float = Field(description="Posterior standard deviation of the weight (uncertainty)")
+
+
+class ModelDescription(BaseModel):
+    status: str = Field(description="Status ('success' or 'error')")
+    dataset: Optional[str] = Field(default=None, description="Which dataset's model is described")
+    target: Optional[str] = Field(default=None, description="The predicted column")
+    terms: Optional[list[ModelTerm]] = Field(
+        default=None,
+        description="Learned weights: target ≈ sum of weight × term (+ intercept)",
+    )
+    noise_std: Optional[float] = Field(
+        default=None, description="Learned standard deviation of the observation noise"
+    )
+    message: Optional[str] = Field(
+        default=None, description="Error message if status is 'error'"
+    )
+
+
 @mcp.tool(timeout=120)
 async def run_bayesian_analysis(file_path: str, iterations: int = 10) -> AnalysisResult:
     """
@@ -118,6 +140,26 @@ async def describe_data(dataset: Optional[Dataset] = None) -> DataDescription:
     """
     result = call_julia(jl.get_data_description, dataset)
     return DataDescription(**{k: result.get(k) for k in DataDescription.model_fields})
+
+
+@mcp.tool(timeout=30)
+async def describe_model(dataset: Optional[Dataset] = None) -> ModelDescription:
+    """
+    Show what the Bayesian model learned: the formula it found in the data.
+    The model predicts
+
+        target ≈ w1·x1 + ... + wd·xd + v1·x1² + ... + vd·xd² + intercept
+
+    and this returns the posterior mean ± standard deviation of every weight, plus the
+    learned noise level (how much is left unexplained). A weight whose mean is within a
+    couple of standard deviations of 0 means the feature (or its square) has no clear
+    effect. Use this to explain which features matter and how, e.g. that a squared term
+    with a positive weight means the effect grows faster and faster.
+    `dataset` is 'houses' or 'bike'; defaults to the most recently trained one.
+    Must call run_bayesian_analysis first.
+    """
+    result = call_julia(jl.get_model_description, dataset)
+    return ModelDescription(**{k: result.get(k) for k in ModelDescription.model_fields})
 
 
 @mcp.tool(timeout=60)

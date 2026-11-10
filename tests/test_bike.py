@@ -123,20 +123,37 @@ def test_cli_show_formula():
 # --- Recovering the hidden formula ------------------------------------------------
 
 
-def test_model_recovers_the_hidden_formula(trained_bike):
-    state = jl.seval('name -> STATES[name]')("bike")
-    names = [str(n) for n in jl.feature_function_names(jl.dataset_spec("bike").features)]
-    means = list(state.parameters.omega_mean)
-    sds = [float(v) ** 0.5 for v in jl.seval("diag")(state.parameters.omega_covariance)]
+async def describe_model(client, dataset=None) -> dict:
+    args = {} if dataset is None else {"dataset": dataset}
+    return (await client.call_tool("describe_model", args)).structured_content
+
+
+async def test_model_recovers_the_hidden_formula(trained_bike, client):
+    out = await describe_model(client, "bike")
+    assert out["status"] == "success"
+    assert out["target"] == "commute_minutes"
     truth = true_coefficients()
-    for name, m, sd in zip(names, means, sds):
+    assert [t["term"] for t in out["terms"]] == [str(n) for n in jl.feature_function_names(jl.dataset_spec("bike").features)]
+    for t in out["terms"]:
+        name, m, sd = t["term"], t["mean"], t["std"]
         assert abs(m - truth[name]) <= 5 * sd + 1e-3, f"{name}: learned {m:.4f} ± {sd:.4f}, true {truth[name]}"
 
 
-def test_model_recovers_the_noise_level(trained_bike):
-    state = jl.seval('name -> STATES[name]')("bike")
-    precision = state.parameters.noise_shape * state.parameters.noise_scale
-    assert float(precision) ** -0.5 == pytest.approx(1.5, rel=0.03)
+async def test_model_recovers_the_noise_level(trained_bike, client):
+    out = await describe_model(client, "bike")
+    assert out["noise_std"] == pytest.approx(1.5, rel=0.03)
+
+
+async def test_describe_model_for_houses(trained_houses, client):
+    out = await describe_model(client, "houses")
+    assert out["status"] == "success"
+    assert out["target"] == "price"
+    assert len(out["terms"]) == 2 * 7 + 1
+
+
+async def test_describe_model_before_training_is_an_error(untrained, client):
+    out = await describe_model(client)
+    assert out["status"] == "error"
 
 
 # --- The demo conversation -------------------------------------------------------------
